@@ -166,15 +166,23 @@ class Icons:
             self.pending.discard(url)
 
     def file(self, name):
-        """Icons of the API's /v2/files, e.g. ui_coin_gold, ui_coin_silver, ui_coin_copper, ui_gem."""
+        """Icons of the API's /v2/files, e.g. ui_coin_gold, ui_coin_silver, ui_coin_copper, ui_gem. Their
+        addresses are looked up in the background (never while drawing), again after 5 min if that failed."""
         if name not in self.files:
-            try:
-                self.files.update({f["id"]: f["icon"] for f in api("files?ids=ui_coin_gold,ui_coin_silver,"
-                                                                    "ui_coin_copper,ui_gem")})
-                save_json("gw2-files.json", self.files)
-            except Exception:
-                return None
+            with self.lock:
+                if time.monotonic() - getattr(self, "files_tried", -999) > 300:
+                    self.files_tried = time.monotonic()
+                    threading.Thread(target=self._fetch_files, daemon=True).start()
+            return None
         return self.get(self.files.get(name))
+
+    def _fetch_files(self):
+        try:
+            self.files.update({f["id"]: f["icon"] for f in api("files?ids=ui_coin_gold,ui_coin_silver,"
+                                                                "ui_coin_copper,ui_gem")})
+            save_json("gw2-files.json", self.files)
+        except Exception:
+            pass
 
 
 ICONS = Icons()

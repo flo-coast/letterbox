@@ -742,3 +742,58 @@ def draw_battery(d):
                                                             else "") +
                       ("  charge me!" if low else ""), col if low else d.p["dim"])])
     d.lines(rows, size=max(12, d.ssz * 1.3))
+
+
+# ---------- desktop notifications, read along on the session bus ----------
+def notifications(ex):
+    """The latest desktop notifications (Discord, mail, ...). A second connection to the session bus becomes
+    a monitor for Notify calls, like dbus-monitor; nothing is changed or answered."""
+    if not hasattr(ex, "notes"):
+        ex.notes, ex.notify_conn = [], None
+        try:
+            addr = Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION, None)
+            c = Gio.DBusConnection.new_for_address_sync(
+                addr, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+                None, None)
+            c.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.Monitoring",
+                        "BecomeMonitor", GLib.Variant("(asu)", (["type='method_call',interface="
+                                                                   "'org.freedesktop.Notifications',member='Notify'"], 0)),
+                        None, Gio.DBusCallFlags.NONE, 1000, None)
+            # only now: the filter keeps every monitored message for itself (a monitor must never answer)
+            c.add_filter(lambda _c, msg, _in: _on_notify(ex, msg))
+            ex.notify_conn = c
+        except GLib.Error as err:
+            ex.notify_conn = False
+            print("letterbox: can't read notifications:", err.message, flush=True)
+    return ex.notes
+
+
+def _on_notify(ex, msg):
+    try:
+        if msg.get_member() == "Notify" and msg.get_body() is not None:
+            app, _id, _icon, summary, body = msg.get_body().unpack()[:5]
+            body = re.sub(r"<[^>]+>", "", body or "").replace("\n", " ").strip()
+            ex.notes = ([dict(app=app or "?", summary=summary, body=body, t=time.time())] + ex.notes)[:20]
+    except Exception:
+        pass
+    return None
+
+
+@tile("notify", "Notifications", group="mem")
+def draw_notify(d):
+    notes = notifications(d.ex)
+    if d.ex.notify_conn is False:
+        d.msg("can't read notifications here")
+        return
+    if not notes:
+        d.msg("no notifications since the game started")
+        return
+    rows = []
+    for n in notes:
+        age = time.time() - n["t"]
+        fresh = age < 20
+        when = "now" if age < 60 else f"{int(age // 60)} min" if age < 3600 else f"{int(age // 3600)} h"
+        text = f"{n['summary']}: {n['body']}" if n["body"] else n["summary"]
+        rows.append([("t", f"{n['app']} · {when}  ", d.p["accent"] if fresh else d.p["dim"]),
+                     ("t", short(text, 100), None if fresh else d.p["dim"])])
+    d.lines(rows)

@@ -247,8 +247,7 @@ def game_dir():
         d = f"{lib}/steamapps/common/Guild Wars 2"
         if os.path.exists(f"{d}/Gw2-64.exe"):
             return d
-    p = cfg.get("bridge_file")
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.expanduser(p)))) if p else None
+    return None
 
 
 def bridge():

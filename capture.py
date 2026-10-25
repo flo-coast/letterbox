@@ -1,4 +1,4 @@
-# capture.py: grab a screen area through KWin's ScreenShot2 D-Bus API (used by gw2-bar.py for the
+# capture.py: grab a screen area through KWin's ScreenShot2 D-Bus API (used by bar.py for the
 # "ambient" background). Returns (width, height, stride, bytes in QImage ARGB32/RGBA layout) or raises.
 import os, threading
 

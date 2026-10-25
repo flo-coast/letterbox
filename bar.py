@@ -49,7 +49,7 @@ THEMES = {
 
 DEFAULTS = {
     "height": None, "position": "bottom",  # game height in px; None = default_height() of the monitor
-    "sensors": True,                       # False = plain black strip (legacy switch)
+    "sensors": True,                       # False = no tiles, only the clock (switch on the Tiles tab)
     "mode": "full",
     "tiles": ["fps", "ping", "cpu", "ctemp", "thread", "gpu", "busy", "gtemp", "events", "bottleneck"],
     "compact_tiles": ["fps", "ping", "bottleneck", "gtemp"],
@@ -58,7 +58,6 @@ DEFAULTS = {
     "mangohud_dir": "~/.local/share/letterbox/mangohud",   # MangoHud output_folder (FPS tiles)
     "api_key": "",                         # GW2 API key (account, wallet, characters, progression, tradingpost)
     "game_dir": "",                        # GW2's folder (Gw2-64.exe), for the Nexus bridge; empty = Steam library
-    "bridge_file": "",                     # bridge.json of the Nexus addon; empty = in game_dir
     "graph_seconds": 60,
     "theme": "classic", "colors": {},         # colors: overrides per group/role or per tile key
     "background": "black",                 # black | ambient | image
@@ -68,7 +67,7 @@ DEFAULTS = {
     "ambient_dim": 0.35, "ambient_rate": 4,
     "brightness": 1.0,
     "clock": {"style": "digital", "h24": True, "seconds": False, "date": False, "tyria": True,
-              "resets": True, "size": 1.0, "show": True, "birthdays": True},
+              "resets": True, "size": 1.0, "show": True, "birthdays": True, "events": True},
     "tile_opts": {},                       # per tile: {"number": bool, "graph": bool}
     "event_sections": ["World bosses", "Hard world bosses"],   # rows of the event timeline tile
     "event_auto_map": True,                # + the meta of the map you are on, if the data has one
@@ -91,7 +90,7 @@ DEFAULTS.update(extras.DEFAULTS)
 
 # Not part of a profile: secrets, and what belongs to this machine rather than to a look
 PRIVATE_KEYS = ("api_key", "calendar_ics")
-MACHINE_KEYS = ("output", "gpu", "gfx_settings", "game_dir", "mangohud_dir", "bridge_file")
+MACHINE_KEYS = ("output", "gpu", "gfx_settings", "game_dir", "mangohud_dir")
 
 
 def write_private_json(path, data):
@@ -376,26 +375,24 @@ class WvW:
                 self.names = {o["id"]: o["name"] for o in objs}
                 os.makedirs(os.path.dirname(self.CACHE), exist_ok=True)
                 json.dump(self.names, open(self.CACHE, "w"))
-        ids = []
-        if self.key:
-            if self.team is None:
-                # the WvW team only comes with a newer schema version; "world" is the old server, which
-                # since the WvW restructuring can point to a different matchup than your team
-                acc = api_get("account?v=2024-07-20T01:00:00Z", self.key)
-                self.team = (acc.get("wvw") or {}).get("team_id") or acc.get("world")
-            ids.append(self.team)
-        for wid in ids:
-            if not wid:
-                continue
-            try:
-                m = api_get(f"wvw/matches?world={wid}")
-            except urllib.error.HTTPError:
-                continue
-            m["_mine"] = next((c for c, ws in m.get("all_worlds", {}).items() if wid in ws), None)
-            self.match, self.err = m, ""
+        if not self.key:
+            self.err = "add a GW2 API key in the settings (System)"
             return
-        self.err = ("add a GW2 API key in the settings (System)" if not self.key
-                    else "no matchup found for your team")
+        if self.team is None:
+            # the WvW team only comes with a newer schema version; "world" (the old server) can point to a
+            # different matchup since the WvW restructuring, so it isn't used
+            acc = api_get("account?v=2024-07-20T01:00:00Z", self.key)
+            self.team = (acc.get("wvw") or {}).get("team_id")
+        if not self.team:
+            self.err = "no WvW team on this account yet"
+            return
+        try:
+            m = api_get(f"wvw/matches?world={self.team}")
+        except urllib.error.HTTPError:
+            self.err = "no matchup found for your team"
+            return
+        m["_mine"] = next((c for c, ws in m.get("all_worlds", {}).items() if self.team in ws), None)
+        self.match, self.err = m, ""
 
     # ---------- for the tiles ----------
     def mine(self, color_id=None):
@@ -441,8 +438,6 @@ def steam_libraries():
 
 
 def bridge_path(cfg):
-    if cfg.get("bridge_file"):
-        return os.path.expanduser(cfg["bridge_file"])
     if cfg.get("game_dir"):
         return os.path.join(os.path.expanduser(cfg["game_dir"]), "addons", "letterbox", "bridge.json")
     for lib in steam_libraries():
@@ -753,7 +748,7 @@ class Ambient:
             cols = np.median(img, axis=0)
             self.target = np.array([b.mean(axis=0) for b in np.array_split(cols, self.COLS)]) / 255
         except Exception as ex:                # capture refused or failed: stay with the plain background
-            print("gw2-bar: ambient capture failed, plain background:", ex, flush=True)
+            print("letterbox: ambient capture failed, plain background:", ex, flush=True)
             self.ok = False
 
     def step(self, dt, tau=0.5):
@@ -774,7 +769,7 @@ class Renderer:
         self.hits, self.data = [], None
         self.alerted = set()                  # events the sound was played for
 
-    def alert(self, cfg, data):
+    def alert(self, cfg):
         """-> (text, seconds to start) of the next event start to warn about, or None."""
         al = cfg.get("alert", {})
         if not al.get("on", True):
@@ -1016,7 +1011,7 @@ class Renderer:
         tsz, ssz = getattr(self, "uniform", {}).get(round(h), (fh * 0.1, fh * 0.085))
         self.text(cr, title, x, y + fh * 0.1, w, tsz, col)
         if kind == "events":
-            self.event_tile(cr, x, y + fh * 0.16, w, h - fh * 0.16, cfg, data, 1)
+            self.event_tile(cr, x, y + fh * 0.16, w, h - fh * 0.16, cfg, data)
             return
         if data is None:
             return
@@ -1279,7 +1274,7 @@ class Renderer:
             secs += [sct for sct in EVENTS if sct["name"] == m and sct not in secs]
         return secs
 
-    def event_tile(self, cr, x, y, w, h, cfg, data, k):
+    def event_tile(self, cr, x, y, w, h, cfg, data):
         """Timeline like the wiki's event timer: one row per section, 10 min back to event_ahead min ahead."""
         secs = self.event_sections(cfg, data, cfg.get("event_sections", []))
         dim = color(cfg, "dim") or (0.45, 0.47, 0.5)
@@ -1403,7 +1398,7 @@ class Renderer:
                 lines.append((f"{name} turns {years} {'today!' if days == 0 else 'tomorrow'}", (1.0, 0.8, 0.3)))
         if style == "minimal":
             lines = []
-        al = self.alert(cfg, None)
+        al = self.alert(cfg)
         alert = None
         if al:
             when = "now" if al[1] <= 0 else f"in {int(al[1] // 60)}:{int(al[1] % 60):02d}"
@@ -1547,7 +1542,7 @@ class Bar(Gtk.ApplicationWindow):
         old, self.cfg = self.cfg, load_config()
         if self.cfg.get("output") != old.get("output"):
             self.scr = screen(self.cfg)                   # kscreen-doctor: only when it can have changed
-        if any(self.cfg.get(k) != old.get(k) for k in ("gpu", "mangohud_dir", "game_dir", "bridge_file")):
+        if any(self.cfg.get(k) != old.get(k) for k in ("gpu", "mangohud_dir", "game_dir")):
             extras_state = self.data.extras                # timer, window tile etc. carry on
             self.data = Data(self.cfg.get("graph_seconds", 60), self.cfg)
             self.data.extras = extras_state

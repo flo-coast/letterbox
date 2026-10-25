@@ -8,7 +8,7 @@
 # Also logged per second: the CPU use of GW2's busiest threads (% of one core: GW2's main/render thread
 # can be the bottleneck while the CPU as a whole looks idle), the GPU's busy % sampled at 10 Hz (average
 # and peak) and the CPU package power (RAPL, readable only by root on current kernels).
-import csv, glob, json, math, os, re, struct, sys, time, urllib.request, zlib
+import csv, glob, json, math, os, struct, sys, time, urllib.request, zlib
 from datetime import datetime
 
 LOGDIR = "/var/log/letterbox"

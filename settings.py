@@ -661,8 +661,6 @@ class Settings(Gtk.ApplicationWindow):
             blocks[bi]["rows"][ri][ti] = val
             structural = False
         self.c["layout"], self.c["compact_layout"] = self.lay["full"], self.lay["compact"]
-        flat = lambda m: [k for b in self.lay[m] for r in b["rows"] for k in r]   # old flat lists, kept in sync
-        self.c["tiles"], self.c["compact_tiles"] = flat("full"), flat("compact")
         self.changed()
         if structural:
             keep_scroll(self.lay_sc, self.render_layout)
@@ -1070,7 +1068,7 @@ class Settings(Gtk.ApplicationWindow):
             return None
 
     def auto_game(self):
-        p = gb.bridge_path(dict(self.c, bridge_file="", game_dir=""))
+        p = gb.bridge_path(dict(self.c, game_dir=""))
         return os.path.dirname(os.path.dirname(os.path.dirname(p))) if p else None
 
     def on_output(self, name):

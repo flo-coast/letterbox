@@ -301,3 +301,165 @@ def bosses_done(ex):
     if not ex.cfg.get("bosses_done", True) or not ex.key:
         return set()
     return ex.poll("bosses", lambda e: set(api("account/worldbosses", e.key)), 300).value or set()
+
+
+# ---------- Trading Post watchlist ----------
+DEFAULTS["tp_watch"] = []                 # [{"id": item id, "target": copper (0 = none)}]
+
+
+def chat_link_item(text):
+    """Item id from an in-game chat link ([&AgH0TQAA]) or a plain number."""
+    text = text.strip()
+    if text.isdigit():
+        return int(text)
+    m = re.match(r"^\[&([A-Za-z0-9+/=]+)\]$", text)
+    if not m:
+        return None
+    import base64
+    raw = base64.b64decode(m.group(1) + "==")
+    return raw[2] | raw[3] << 8 | raw[4] << 16 if len(raw) >= 5 and raw[0] == 2 else None   # 2 = item
+
+
+def parse_coins(text):
+    """'1g 20s 5c', '12s', '1.5g' or plain copper -> copper (None if unreadable)."""
+    text = text.strip().lower().replace(",", ".")
+    if not text:
+        return 0
+    if re.fullmatch(r"\d+", text):
+        return int(text)
+    total, found = 0, False
+    for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([gsc])", text):
+        total += float(num) * {"g": 10000, "s": 100, "c": 1}[unit]
+        found = True
+    return int(round(total)) if found else None
+
+
+def coins_text(copper):
+    g, s, c = copper // 10000, copper // 100 % 100, copper % 100
+    return " ".join(f"{v}{u}" for v, u in ((g, "g"), (s, "s"), (c, "c")) if v) or "0c"
+
+
+def fetch_tp(ex):
+    watch = [w for w in ex.cfg.get("tp_watch", []) if w.get("id")]
+    out = {"items": [], "delivery": api("commerce/delivery", ex.key) if ex.key else None}
+    if not watch:
+        return out
+    ids = ",".join(str(w["id"]) for w in watch)
+    items = {i["id"]: i for i in api(f"items?ids={ids}")}
+    prices = {p["id"]: p for p in api(f"commerce/prices?ids={ids}")}
+    hist = load_json("tp-history.json", {})              # first price seen each day, for the trend
+    today, yday = str(date.today()), str(date.today() - timedelta(days=1))
+    for w in watch:
+        p = prices.get(w["id"], {})
+        buy, sell = p.get("buys", {}).get("unit_price", 0), p.get("sells", {}).get("unit_price", 0)
+        hist.setdefault(today, {}).setdefault(str(w["id"]), [buy, sell])
+        prev = hist.get(yday, {}).get(str(w["id"]))
+        it = items.get(w["id"], {})
+        out["items"].append(dict(id=w["id"], name=it.get("name", f"item {w['id']}"), icon=it.get("icon"),
+                                 buy=buy, sell=sell, prev=prev[1] if prev else None, target=w.get("target", 0)))
+    for d in sorted(hist)[:-8]:
+        del hist[d]
+    save_json("tp-history.json", hist)
+    return out
+
+
+@tile("tp", "Trading Post")
+def draw_tp(d):
+    if not d.cfg.get("tp_watch") and not d.ex.key:
+        d.msg("add items in the settings (Extras)")
+        return
+    pl = d.ex.poll("tp", fetch_tp, 120)
+    if d.waiting(pl):
+        return
+    nf, rows = d.r.f_num, []
+    for it in pl.value["items"]:
+        hit = it["target"] and it["sell"] and it["sell"] <= it["target"]
+        trend = []
+        if it["prev"]:
+            ch = (it["sell"] - it["prev"]) / it["prev"] * 100
+            trend = [("t", f"  {'+' if ch >= 0 else ''}{ch:.0f} %", d.GREEN if ch >= 0 else d.RED)]
+        rows.append([("i", ICONS.get(it["icon"])), ("t", " " + short(it["name"], 28) + "  ", d.GOLD if hit else None)]
+                    + coin_parts(it["sell"], nf) + trend + ([("t", "  below target!", d.GOLD)] if hit else []))
+    dl = pl.value.get("delivery")
+    if dl and (dl.get("coins") or dl.get("items")):
+        rows.append([("t", "to pick up  ", d.p["accent"])] + (coin_parts(dl["coins"], nf) if dl.get("coins") else [])
+                    + ([("t", f"  {sum(i.get('count', 1) for i in dl['items'])} items", d.p["dim"])]
+                       if dl.get("items") else []))
+    if not rows:
+        d.msg("add items in the settings (Extras)")
+        return
+    d.lines(rows)
+
+
+def tp_settings(win, f):
+    """Watchlist editor for the settings: add by id or chat link, target price, remove."""
+    from gi.repository import Gtk
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+    names = load_json("tp-names.json", {})
+
+    def name_of(i):
+        if str(i) not in names:
+            try:
+                names[str(i)] = api(f"items/{i}")["name"]
+                save_json("tp-names.json", names)
+            except Exception:
+                return f"item {i}"
+        return names[str(i)]
+
+    def save(lst):
+        win.c["tp_watch"] = lst
+        win.changed()
+        render()
+
+    def render():
+        while (ch := box.get_first_child()) is not None:
+            box.remove(ch)
+        add = Gtk.Box(spacing=6)
+        entry = Gtk.Entry(placeholder_text="item id or chat link, e.g. [&AgH0TQAA]", hexpand=True)
+        btn = Gtk.Button(label="Add")
+        note = Gtk.Label(css_classes=["dim-label"])
+
+        def do_add(*_):
+            i = chat_link_item(entry.get_text())
+            if not i:
+                note.set_text("not an item id or item chat link")
+                return
+            if any(w["id"] == i for w in win.c.get("tp_watch", [])):
+                note.set_text("already on the list")
+                return
+            save(win.c.get("tp_watch", []) + [{"id": i, "target": 0}])
+        entry.connect("activate", do_add)
+        btn.connect("clicked", do_add)
+        add.append(entry)
+        add.append(btn)
+        add.append(note)
+        box.append(add)
+        for n, w in enumerate(win.c.get("tp_watch", [])):
+            row = Gtk.Box(spacing=6)
+            row.append(Gtk.Label(label=name_of(w["id"]), xalign=0, hexpand=True))
+            row.append(Gtk.Label(label="alert below", css_classes=["dim-label"]))
+            tgt = Gtk.Entry(text=coins_text(w["target"]) if w.get("target") else "", placeholder_text="e.g. 1g 20s",
+                            width_chars=10)
+
+            def set_target(e, n=n):
+                v = parse_coins(e.get_text())
+                if v is not None:
+                    lst = win.c["tp_watch"]
+                    lst[n]["target"] = v
+                    win.c["tp_watch"] = lst
+                    win.changed()
+            tgt.connect("changed", set_target)
+            row.append(tgt)
+            rm = Gtk.Button(icon_name="edit-delete-symbolic", css_classes=["flat"], tooltip_text="remove")
+            rm.connect("clicked", lambda _b, n=n: save([w for k, w in enumerate(win.c["tp_watch"]) if k != n]))
+            row.append(rm)
+            box.append(row)
+    render()
+    return box
+
+
+SETTINGS += [dict(kind="heading", label="Trading Post"),
+             dict(key="tp_watch", kind="custom", label="Watchlist", build=tp_settings,
+                  hint="Shift+click an item in game, copy the link from the chat and paste it here. The tile shows "
+                       "the sell price, the change since yesterday and turns gold below your alert price. Your "
+                       "delivery box shows up there too (with the API key).")]

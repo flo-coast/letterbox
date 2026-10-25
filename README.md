@@ -29,6 +29,8 @@ I won't bore you with why I built this. If you're curious, there's a [section at
 | Map, Combat, Character | where you are, how long you've been fighting, who you're playing |
 | Bottleneck | a guess at what holds the game back right now, GPU or CPU |
 | Event timer | world bosses and metas as a timeline like the one on the wiki |
+| WvW matchup | the three teams by victory points, the current skirmish's score, time left and points per tick |
+| WvW map | who holds what on the map you're on and the latest captures |
 | Fans, Memory, Network | the rest |
 
 Every number tile can show the number, a graph of the last 30 s to 5 min, or both, in a colour of your
@@ -44,6 +46,13 @@ choice.
 - A start warning a few minutes before a boss, in a colour you choose, with blinking and a sound if you
   want them.
 - The clock can be digital, analog or minimal.
+
+### WvW
+
+The WvW tiles get the matchup from the GW2 API every 30 seconds while they're shown. Your team comes from
+the game itself once you've been in WvW, or right away if you add an API key in the settings (made at
+[account.arena.net/applications](https://account.arena.net/applications), the "account" permission is
+enough).
 
 ### More
 

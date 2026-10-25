@@ -12,7 +12,7 @@
 # Modes (Meta+Shift+B, D-Bus Cycle): full -> compact -> clock -> off.
 # Background "ambient": a blurred, dimmed colour strip sampled from the edge of the game image through
 # KWin's ScreenShot2 API (area passed by the letterbox script in LETTERBOX_AMBIENT_AREA).
-import glob, json, math, os, re, subprocess, sys, time
+import glob, json, math, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
@@ -54,6 +54,7 @@ DEFAULTS = {
     "output": "",                          # monitor (e.g. "DP-1"); empty = the primary one
     "gpu": "",                             # PCI address of the GPU to show (e.g. "0000:03:00.0"); empty = auto
     "mangohud_dir": "~/.local/share/letterbox/mangohud",   # MangoHud output_folder (FPS tiles)
+    "api_key": "",                         # GW2 API key ("account" permission): finds your WvW team
     "graph_seconds": 60,
     "theme": "classic", "colors": {},         # colors: overrides per group/role or per tile key
     "background": "black",                 # black | ambient
@@ -250,6 +251,108 @@ def game_ping():
     return best
 
 
+API = "https://api.guildwars2.com/v2"
+WVW_MAPS = {38: "Center", 95: "GreenHome", 96: "BlueHome", 1099: "RedHome"}
+WVW_MAP_NAMES = {"Center": "Eternal Battlegrounds", "RedHome": "Red Desert BL", "GreenHome": "Green Alpine BL",
+                 "BlueHome": "Blue Alpine BL"}
+TEAM_COLOR_IDS = {9: "blue", 55: "green", 376: "red"}       # MumbleLink identity team_color_id
+WVW_COLORS = {"red": (0.92, 0.33, 0.3), "green": (0.38, 0.8, 0.42), "blue": (0.36, 0.6, 0.96)}
+
+
+def api_get(path, key=None):
+    url = f"{API}/{path}" + (("&" if "?" in path else "?") + f"access_token={key}" if key else "")
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "letterbox"}), timeout=10) as r:
+        return json.load(r)
+
+
+class WvW:
+    """Your WvW matchup from the GW2 API, refreshed every 30 s in a thread while a WvW tile is shown.
+    Your team: the API key's account (/v2/account wvw.team_id), else the world id in MumbleLink."""
+    CACHE = os.path.expanduser("~/.cache/letterbox/wvw-objectives.json")
+
+    def __init__(self):
+        self.key = ""
+        self.world = None                     # from MumbleLink, set by Data.update
+        self.team = None                      # team or world id found in the match
+        self.match = None
+        self.err = "loading…"
+        self.names = {}
+        self.last_touch = 0
+        self.thread = None
+
+    def touch(self, key):
+        """Called while a WvW tile is drawn: keeps the updates running."""
+        self.last_touch = time.monotonic()
+        if key != self.key:
+            self.key, self.team = key, None
+        if not self.thread or not self.thread.is_alive():
+            self.thread = threading.Thread(target=self.loop, daemon=True)
+            self.thread.start()
+
+    def loop(self):
+        while time.monotonic() - self.last_touch < 120:      # stops 2 min after the last WvW tile was drawn
+            try:
+                self.refresh()
+            except Exception as ex:                          # network, API down, bad key: show it, try again
+                self.err = f"GW2 API: {ex}"[:80]
+            time.sleep(30)
+
+    def refresh(self):
+        if not self.names:
+            try:
+                self.names = json.load(open(self.CACHE))
+            except (OSError, ValueError):
+                objs = api_get("wvw/objectives?ids=all")
+                self.names = {o["id"]: o["name"] for o in objs}
+                os.makedirs(os.path.dirname(self.CACHE), exist_ok=True)
+                json.dump(self.names, open(self.CACHE, "w"))
+        ids = []
+        if self.key:
+            if self.team is None:
+                acc = api_get("account", self.key)
+                self.team = (acc.get("wvw") or {}).get("team_id") or acc.get("world")
+            ids.append(self.team)
+        if self.world:
+            ids.append(self.world)
+        for wid in ids:
+            if not wid:
+                continue
+            try:
+                m = api_get(f"wvw/matches?world={wid}")
+            except urllib.error.HTTPError:
+                continue
+            m["_mine"] = next((c for c, ws in m.get("all_worlds", {}).items() if wid in ws), None)
+            self.match, self.err = m, ""
+            return
+        self.err = ("add an API key in the settings, or enter WvW once" if not self.key and not self.world
+                    else "no matchup found for your team")
+
+    # ---------- for the tiles ----------
+    def mine(self, color_id=None):
+        m = self.match or {}
+        return m.get("_mine") or TEAM_COLOR_IDS.get(color_id)
+
+    def skirmish(self):
+        """-> (number, of, seconds left) of the current skirmish (2 h each from the match start)."""
+        m = self.match
+        if not m or not m.get("skirmishes"):
+            return None
+        start = datetime.fromisoformat(m["start_time"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(m["end_time"].replace("Z", "+00:00"))
+        n = m["skirmishes"][-1]["id"]
+        left = (start + timedelta(hours=2 * n) - datetime.now(timezone.utc)).total_seconds()
+        return n, round((end - start).total_seconds() / 7200), max(0, left)
+
+    def ppt(self):
+        out = {"red": 0, "green": 0, "blue": 0}
+        for mp in (self.match or {}).get("maps", []):
+            for o in mp["objectives"]:
+                c = o.get("owner", "").lower()
+                if c in out:
+                    out[c] += o.get("points_tick", 0)
+        return out
+
+
 def compass(deg):
     if deg is None:
         return "-"
@@ -269,6 +372,7 @@ class Data:
         self.sensors = sensors.Sensors(cfg.get("gpu", ""))
         self.gpu_dev = self.sensors.gpu
         self.pings = deque(maxlen=60)
+        self.wvw = WvW()
         self.hist = {}
         self.graph_seconds = graph_seconds
         self.probe = self.mumble = None
@@ -356,6 +460,10 @@ class Data:
             self.pings.append(v["ping"])
         sub["ping"] = f"avg {sum(self.pings) / len(self.pings):.0f} ms (60 s)" if self.pings else "-"
         self.in_combat = g.get("in_combat") == "1"
+        try:
+            self.wvw.world = int(g.get("world_id") or 0) or None
+        except ValueError:
+            pass
         if self.in_combat and self.combat_since is None:
             self.combat_since = now
         if not self.in_combat and self.combat_since is not None:
@@ -426,6 +534,8 @@ TILES = {
     "combat": ("Combat", "", 0, "game", "text"),
     "char": ("Character", "", 0, "game", "text"),
     "events": ("Event timer", "", 0, "game", "events"),
+    "wvw": ("WvW matchup", "", 0, "game", "wvw"),
+    "wvwmap": ("WvW map", "", 0, "game", "wvwmap"),
     "cpu": ("CPU", "MHz", 5000, "cpu", "num"),
     "pkg": ("CPU package", "W", 60, "cpu", "num"),
     "ctemp": ("CPU temp", "°C", 105, "cpu", "num"),
@@ -763,6 +873,11 @@ class Renderer:
             return
         if data is None:
             return
+        if kind in ("wvw", "wvwmap"):
+            data.wvw.touch(cfg.get("api_key", ""))
+            draw = self.wvw_tile if kind == "wvw" else self.wvwmap_tile
+            draw(cr, x, y + fh * 0.16, w, h - fh * 0.16, fh, ssz, cfg, data)
+            return
         if kind in ("text", "light"):
             big, small = data.text.get(key) or ("-", "")
             bx = x
@@ -803,6 +918,108 @@ class Renderer:
         self.number_line(cr, x, y + h * 0.38, w, fh * 0.26, parts)
         self.text(cr, sub, x, y + h * 0.5, w, ssz, dim)
         self.graph(cr, x, y + h * 0.58, w, h * 0.42, key, gmax, col, dim, cfg, data)
+
+    def wvw_tile(self, cr, x, y, w, h, fh, ssz, cfg, data):
+        """Teams by victory points: name, bar of the current skirmish's score, VP. Yours is marked."""
+        wv, dim = data.wvw, color(cfg, "dim") or (0.45, 0.47, 0.5)
+        num = color(cfg, "number") or (0.86, 0.87, 0.89)
+        m = wv.match
+        if not m:
+            self.text(cr, wv.err, x, y + h * 0.4, w, ssz, dim)
+            return
+        mine = wv.mine(f((data.mumble or {}).get("team_color_id")))
+        vp, sk = m["victory_points"], m["skirmishes"][-1]["scores"]
+        order = sorted(vp, key=lambda c: -vp[c])
+        top = max(1, max(sk.values()))
+        rows_h = h - ssz * 2.0
+        rh = rows_h / 3
+        nw, vw = w * 0.3, w * 0.2
+        size = min(rh * 0.5, fh * 0.13)
+        for i, c in enumerate(order):
+            ry, col = y + i * rh, WVW_COLORS[c]
+            self.text(cr, f"{i + 1}. {c.title()}" + (" · you" if c == mine else ""), x, ry + rh * 0.5 + size * 0.36,
+                      nw - 6, size, col)
+            bx, bw = x + nw, (w - nw - vw) * sk[c] / top
+            cr.set_source_rgba(*col, 0.95 if c == mine else 0.6)
+            cr.rectangle(bx, ry + rh * 0.2, max(2, bw), rh * 0.6)
+            cr.fill()
+            if bw > size * 2.5:
+                self.text(cr, str(sk[c]), bx + 4, ry + rh * 0.5 + size * 0.3, bw - 8, size * 0.8, (0.05, 0.05, 0.05),
+                          face=self.f_num)
+            self.text(cr, f"{vp[c]} VP", x + w - vw, ry + rh * 0.5 + size * 0.36, vw, size, num, face=self.f_num,
+                      align="right")
+        sm = wv.skirmish()
+        ppt = wv.ppt()
+        line = (f"skirmish {sm[0]}/{sm[1]} · {int(sm[2] // 3600)}:{int(sm[2] % 3600 // 60):02d} left · " if sm else "")
+        line += "PPT " + " ".join(f"{c[0].upper()} {ppt[c]}" for c in order)
+        self.text(cr, line, x, y + rows_h + ssz * 1.4, w, ssz, dim)
+
+    def wvwmap_tile(self, cr, x, y, w, h, fh, ssz, cfg, data):
+        """The WvW map you're on (else Eternal Battlegrounds): who holds what, and the latest captures."""
+        wv, dim = data.wvw, color(cfg, "dim") or (0.45, 0.47, 0.5)
+        num = color(cfg, "number") or (0.86, 0.87, 0.89)
+        m = wv.match
+        if not m:
+            self.text(cr, wv.err, x, y + h * 0.4, w, ssz, dim)
+            return
+        g = data.mumble or {}
+        try:
+            here = WVW_MAPS.get(int(g.get("map_id") or 0))
+        except ValueError:
+            here = None
+        mtype = here or "Center"
+        mp = next((x_ for x_ in m["maps"] if x_["type"] == mtype), None)
+        if not mp:
+            return
+        size = min(fh * 0.15, h * 0.16)
+        self.text(cr, WVW_MAP_NAMES[mtype] + ("" if here else "  (you're not in WvW)"), x, y + size, w, size, num)
+        # ownership: one segment per objective, as wide as the points it gives per tick
+        objs = [o for o in mp["objectives"] if o.get("points_tick")]
+        rank = {"red": 0, "green": 1, "blue": 2}
+        objs.sort(key=lambda o: (rank.get(o["owner"].lower(), 3), -o["points_tick"]))
+        total = sum(o["points_tick"] for o in objs) or 1
+        by, bh, bx = y + size * 1.5, h * 0.14, x
+        for o in objs:
+            ow = w * o["points_tick"] / total
+            cr.set_source_rgb(*WVW_COLORS.get(o["owner"].lower(), (0.4, 0.4, 0.4)))
+            cr.rectangle(bx, by, max(1, ow - 1.5), bh)
+            cr.fill()
+            bx += ow
+        counts = {}
+        for o in mp["objectives"]:
+            if o["type"] in ("Camp", "Tower", "Keep", "Castle"):
+                counts.setdefault(o["owner"].lower(), {}).setdefault(o["type"], 0)
+                counts[o["owner"].lower()][o["type"]] += 1
+        cx = x
+        for c in ("red", "green", "blue"):
+            k = counts.get(c, {})
+            txt = " ".join((f"{k[t]} castle" if t == "Castle" else f"{k[t]}{t[0]}")
+                           for t in ("Castle", "Keep", "Tower", "Camp") if k.get(t))
+            cx = self.text(cr, txt or "-", cx, by + bh + ssz * 1.3, w / 3 - 8, ssz, WVW_COLORS[c]) + 0
+            cx = x + w / 3 * (("red", "green", "blue").index(c) + 1)
+        # latest captures on this map, newest first
+        now = datetime.now(timezone.utc)
+        flips = []
+        for o in mp["objectives"]:
+            if o.get("last_flipped") and o["type"] in ("Camp", "Tower", "Keep", "Castle"):
+                t = datetime.fromisoformat(o["last_flipped"].replace("Z", "+00:00"))
+                if (now - t).total_seconds() < 1800:
+                    flips.append((t, o))
+        flips.sort(key=lambda z: z[0], reverse=True)
+        ly, lh = by + bh + ssz * 2.0, max(MIN_FONT, ssz) * 1.45
+        for t, o in flips:
+            if ly + lh > y + h:
+                break
+            col = WVW_COLORS.get(o["owner"].lower(), dim)
+            cr.set_source_rgb(*col)
+            cr.arc(x + lh * 0.25, ly + lh * 0.55, lh * 0.18, 0, 2 * math.pi)
+            cr.fill()
+            mins = int((now - t).total_seconds() // 60)
+            self.text(cr, f"{wv.names.get(o['id'], o['type'])} · {mins} min", x + lh * 0.6, ly + lh * 0.75,
+                      w - lh * 0.6, max(MIN_FONT, ssz), num if mins < 5 else dim)
+            ly += lh
+        if not flips:
+            self.text(cr, "no captures in the last 30 min", x, ly + lh * 0.75, w, ssz, dim)
 
     def graph(self, cr, x, gy, w, gh, key, gmax, col, dim, cfg, data):
         h = gh / 0.42

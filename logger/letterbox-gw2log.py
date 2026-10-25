@@ -18,7 +18,7 @@ NAME = "Guild Wars 2".encode("utf-16-le")
 FIELDS = ["time", "map_id", "map_name", "map_type", "in_combat", "mount", "map_open", "focus",
           "x", "y", "z", "tick", "thread1_pct", "thread1_name", "thread2_pct", "thread2_name", "proc_pct",
           "threads_over_50", "gpu_busy_avg", "gpu_busy_max",
-          "char_name", "profession", "spec", "commander", "heading", "cpu_pkg_w"]
+          "char_name", "profession", "spec", "commander", "heading", "cpu_pkg_w", "world_id", "team_color_id"]
 PROFESSIONS = {1: "Guardian", 2: "Warrior", 3: "Engineer", 4: "Ranger", 5: "Thief", 6: "Elementalist",
                7: "Mesmer", 8: "Necromancer", 9: "Revenant"}
 CLK_TCK = os.sysconf("SC_CLK_TCK")
@@ -226,7 +226,8 @@ def parse(buf):
                 in_combat=int(bool(ui_state & 0x40)), map_open=int(bool(ui_state & 0x1)),
                 focus=int(bool(ui_state & 0x8)), mount=MOUNTS.get(mount, str(mount)),
                 char_name=ident.get("name", ""), profession=PROFESSIONS.get(ident.get("profession"), ""),
-                spec_id=ident.get("spec", 0), commander=int(bool(ident.get("commander"))), heading=heading)
+                spec_id=ident.get("spec", 0), commander=int(bool(ident.get("commander"))), heading=heading,
+                world_id=ident.get("world_id", ""), team_color_id=ident.get("team_color_id", ""))
 
 
 def main():

@@ -721,6 +721,15 @@ class Settings(Gtk.ApplicationWindow):
             "  Meta+Shift+M   lag marker: notes the time (sound + red flash) in\n"
             "                 ~/.local/share/letterbox/markers.log, to find laggy moments in your logs later\n"
             "Change them in System Settings → Shortcuts (search 'letterbox')."), xalign=0, wrap=True), 0, 2, 3, 1)
+        g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 3, 3, 1)
+        key = Gtk.PasswordEntry(show_peek_icon=True, hexpand=True, text=self.c.get("api_key", ""))
+        key.connect("changed", lambda w: self.set("api_key", w.get_text().strip()))
+        self.row(g, 4, "GW2 API key", key)
+        g.attach(Gtk.Label(label=(
+            "Optional, for the WvW tiles. It finds your WvW team even before you enter WvW (without a key the bar "
+            "learns it from the game once you're there). Make one at account.arena.net/applications, the "
+            "'account' permission is enough. It stays in ~/.config/letterbox/config.json."),
+            xalign=0, wrap=True, css_classes=["dim-label"]), 1, 5, 2, 1)
         return sc
 
     # ---------- tiles ----------
@@ -814,8 +823,9 @@ class Settings(Gtk.ApplicationWindow):
     def changed(self):
         self.data.graph_seconds = self.c.get("graph_seconds", 60)
         os.makedirs(os.path.dirname(gb.CONF), exist_ok=True)
-        with open(gb.CONF, "w") as fh:
+        with open(os.open(gb.CONF, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:   # may hold the API key
             json.dump(self.c, fh, indent=1)
+        os.chmod(gb.CONF, 0o600)
         Gio.bus_get_sync(Gio.BusType.SESSION).call("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Reload", None,
                                                     None, Gio.DBusCallFlags.NONE, 500, None, None)
         self.area.queue_draw()

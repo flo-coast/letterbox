@@ -16,6 +16,7 @@ import glob, json, math, os, re, subprocess, sys, threading, time, urllib.error,
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
+import cairo
 import numpy as np
 import gi
 gi.require_version("Gtk", "4.0")
@@ -60,7 +61,10 @@ DEFAULTS = {
     "bridge_file": "",                     # bridge.json of the Nexus addon; empty = in game_dir
     "graph_seconds": 60,
     "theme": "classic", "colors": {},         # colors: overrides per group/role or per tile key
-    "background": "black",                 # black | ambient
+    "background": "black",                 # black | ambient | image
+    "bg_image": "",                        # own picture (copied to ~/.config/letterbox/wallpaper.*)
+    "bg_zoom": 1.0, "bg_x": 0.5, "bg_y": 0.5,   # picture: zoom, and where the visible part sits (0..1)
+    "bg_dim": 0.45, "bg_blur": 0,          # picture: darkening for readable text, blur in px
     "ambient_dim": 0.35, "ambient_rate": 4,
     "brightness": 1.0,
     "clock": {"style": "digital", "h24": True, "seconds": False, "date": False, "tyria": True,
@@ -133,6 +137,45 @@ def screen(cfg=None):
     cfg = cfg if cfg is not None else load_config()
     outs = outputs()
     return next((o for o in outs if o["name"] == cfg.get("output")), outs[0] if outs else None)
+
+
+_PIC = {}
+
+
+def load_picture(path):
+    """The own background picture as a cairo surface (at most 4096 px wide), reloaded when the file changes."""
+    if not path:
+        return None
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return None
+    if _PIC.get("key") != key:
+        surf = None
+        try:
+            gi.require_version("GdkPixbuf", "2.0")
+            from gi.repository import Gdk, GdkPixbuf
+            pb = GdkPixbuf.Pixbuf.new_from_file(path)
+            pb = pb.apply_embedded_orientation() or pb
+            if pb.get_width() > 4096:
+                pb = pb.scale_simple(4096, round(pb.get_height() * 4096 / pb.get_width()), GdkPixbuf.InterpType.BILINEAR)
+            surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, pb.get_width(), pb.get_height())
+            ctx = cairo.Context(surf)
+            Gdk.cairo_set_source_pixbuf(ctx, pb, 0, 0)
+            ctx.paint()
+        except Exception as ex:
+            print("letterbox: can't load the background picture:", ex, flush=True)
+        _PIC.clear()
+        _PIC.update(key=key, surf=surf)
+    return _PIC["surf"]
+
+
+def crop_rect(iw, ih, aspect, zoom, px, py):
+    """Visible part of a picture: the largest rectangle with the bar's aspect, zoomed in, placed at px/py
+    (0..1 = left/top .. right/bottom of the free room). -> (x, y, w, h) in picture pixels."""
+    cw, ch = (iw, iw / aspect) if iw / aspect <= ih else (ih * aspect, ih)
+    cw, ch = cw / max(1.0, zoom), ch / max(1.0, zoom)
+    return (iw - cw) * min(1, max(0, px)), (ih - ch) * min(1, max(0, py)), cw, ch
 
 
 def rgb(hexstr):
@@ -748,6 +791,8 @@ class Renderer:
         cr.paint()
         if cfg.get("background") == "ambient" and ambient_cols is not None and mode != "off":
             self.draw_ambient(cr, w, h, ambient_cols, cfg.get("ambient_dim", 0.35), cfg.get("position"))
+        elif cfg.get("background") == "image" and mode != "off":
+            self.draw_picture(cr, w, h, cfg)
         if mode != "off":
             cr.push_group()
             self.draw_content(cr, w, h, cfg, data, mode)
@@ -785,6 +830,37 @@ class Renderer:
         v.add_color_stop_rgba(0, 0, 0, 0, 0.6 if game_below else 0.0)
         v.add_color_stop_rgba(1, 0, 0, 0, 0.0 if game_below else 0.6)
         cr.set_source(v)
+        cr.paint()
+
+    def draw_picture(self, cr, w, h, cfg):
+        """Own picture: the chosen part, scaled to the bar, blurred and darkened as set. Rendered once per
+        change and then reused."""
+        surf = load_picture(cfg.get("bg_image"))
+        if surf is None:
+            return
+        blur = max(0, int(cfg.get("bg_blur", 0)))
+        key = (_PIC["key"], round(w), round(h), cfg.get("bg_zoom", 1.0), cfg.get("bg_x", 0.5), cfg.get("bg_y", 0.5), blur)
+        if _PIC.get("rkey") != key:
+            x, y, cw, ch = crop_rect(surf.get_width(), surf.get_height(), w / h, cfg.get("bg_zoom", 1.0),
+                                     cfg.get("bg_x", 0.5), cfg.get("bg_y", 0.5))
+            # blur = draw small, then scale up smoothly
+            sw, sh = (max(1, round(w / (1 + blur / 2))), max(1, round(h / (1 + blur / 2)))) if blur else (round(w), round(h))
+            small = cairo.ImageSurface(cairo.FORMAT_RGB24, sw, sh)
+            c = cairo.Context(small)
+            c.scale(sw / cw, sh / ch)
+            c.set_source_surface(surf, -x, -y)
+            c.get_source().set_filter(cairo.FILTER_GOOD)
+            c.paint()
+            out = cairo.ImageSurface(cairo.FORMAT_RGB24, round(w), round(h))
+            c = cairo.Context(out)
+            c.scale(w / sw, h / sh)
+            c.set_source_surface(small, 0, 0)
+            c.get_source().set_filter(cairo.FILTER_GOOD)
+            c.paint()
+            _PIC.update(rkey=key, rendered=out)
+        cr.set_source_surface(_PIC["rendered"], 0, 0)
+        cr.paint()
+        cr.set_source_rgba(0, 0, 0, min(0.95, max(0, cfg.get("bg_dim", 0.45))))
         cr.paint()
 
     def draw_content(self, cr, w, h, cfg, data, mode):

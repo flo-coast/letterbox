@@ -3,7 +3,9 @@
 # from live data (same Renderer as the bar), on/off switch, game size and position, start mode, background
 # (plain / ambient), theme, colours and fonts, clock, tile layout, event timer, combat behaviour, profiles.
 # Every change is saved to ~/.config/letterbox/config.json at once; a running bar reloads it.
-import importlib.util, json, os, re, subprocess, sys
+import glob, importlib.util, json, os, re, shutil, subprocess, sys
+
+import cairo
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -332,9 +334,10 @@ class Settings(Gtk.ApplicationWindow):
         self.font_box = fb
         self.row(g, 13, "Fonts", fb)
         self.row(g, 8, "Background", dropdown([("black", "Plain (background colour)"),
-                                                ("ambient", "Ambient: colours of the game image")],
-                                               self.c.get("background", "black"),
-                                               lambda v: self.set("background", v)))
+                                                ("ambient", "Ambient: colours of the game image"),
+                                                ("image", "Own picture")],
+                                               self.c.get("background", "black"), self.on_background))
+        self.row(g, 12, "Picture", self.picture_editor())
         dim = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.1, 0.8, 0.05)
         dim.set_value(self.c.get("ambient_dim", 0.35))
         dim.set_hexpand(True)
@@ -361,6 +364,155 @@ class Settings(Gtk.ApplicationWindow):
         self.row(g, 14, "", reset)
         self.on_height_label()
         return sc
+
+    # ---------- own background picture ----------
+    def on_background(self, v):
+        self.set("background", v)
+        if v == "image" and not self.c.get("bg_image"):
+            self.pick_picture()
+
+    def bar_size(self):
+        """The bar's size in device pixels (for the picture's frame)."""
+        free = OUT_H - self.c["height"]
+        return OUT_W, max(1, free // 2 if self.c.get("position") == "center" else free)
+
+    def picture_editor(self):
+        """Choose a picture, then move (drag) and zoom (wheel or slider) the frame that shows what the bar
+        gets; darken and blur for readable text."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, hexpand=True)
+        top = Gtk.Box(spacing=8)
+        choose = Gtk.Button(label="Choose picture…")
+        choose.connect("clicked", lambda _b: self.pick_picture())
+        top.append(choose)
+        reset = Gtk.Button(label="Reset position", css_classes=["flat"])
+        reset.connect("clicked", lambda _b: self.picture_set(bg_zoom=1.0, bg_x=0.5, bg_y=0.5, save=True))
+        top.append(reset)
+        self.pic_label = Gtk.Label(xalign=0, css_classes=["dim-label"], ellipsize=Pango.EllipsizeMode.MIDDLE,
+                                   hexpand=True)
+        top.append(self.pic_label)
+        box.append(top)
+        self.pic_area = Gtk.DrawingArea(content_height=220, hexpand=True)
+        self.pic_area.set_draw_func(self.draw_picture_editor)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", lambda _g, _x, _y: setattr(self, "_drag0", (self.c.get("bg_x", 0.5),
+                                                                                self.c.get("bg_y", 0.5))))
+        drag.connect("drag-update", self.on_picture_drag)
+        drag.connect("drag-end", lambda *_: self.changed())
+        self.pic_area.add_controller(drag)
+        scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+        scroll.connect("scroll", lambda _c, _dx, dy: (self.picture_set(
+            bg_zoom=min(8.0, max(1.0, self.c.get("bg_zoom", 1.0) * (0.9 if dy > 0 else 1.1))), save=True), True)[1])
+        self.pic_area.add_controller(scroll)
+        box.append(self.pic_area)
+        self.pic_sliders = {}
+        for key, label, lo, hi, step in (("bg_zoom", "Zoom", 1.0, 8.0, 0.05), ("bg_dim", "Darken", 0.0, 0.9, 0.05),
+                                          ("bg_blur", "Blur", 0, 40, 1)):
+            row = Gtk.Box(spacing=8)
+            row.append(Gtk.Label(label=label, width_chars=7, xalign=0))
+            sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, step)
+            sc.set_hexpand(True)
+            sc.set_value(self.c.get(key, gb.DEFAULTS[key]))
+            sc.connect("value-changed", lambda w, k=key: None if getattr(self, "_pic_sync", False) else
+                       self.picture_set(**{k: int(w.get_value()) if k == "bg_blur" else round(w.get_value(), 2)},
+                                        save=True))
+            row.append(sc)
+            self.pic_sliders[key] = sc
+            box.append(row)
+        box.append(Gtk.Label(label="Drag the frame to move it, scroll to zoom. The frame has the bar's shape.",
+                             xalign=0, css_classes=["dim-label"]))
+        self.picture_label()
+        return box
+
+    def picture_label(self):
+        p = self.c.get("bg_image", "")
+        self.pic_label.set_text(os.path.basename(self.c.get("bg_image_name", "") or p) if p else "no picture yet")
+
+    def pick_picture(self):
+        dlg = Gtk.FileDialog(title="Background picture", modal=True)
+        flt = Gtk.FileFilter(name="Pictures")
+        flt.add_mime_type("image/*")
+        store = Gio.ListStore.new(Gtk.FileFilter)
+        store.append(flt)
+        dlg.set_filters(store)
+        pics = os.path.expanduser("~/Pictures")
+        if os.path.isdir(pics):
+            dlg.set_initial_folder(Gio.File.new_for_path(pics))
+
+        def done(d, res):
+            try:
+                src = d.open_finish(res).get_path()
+            except GLib.Error:
+                return
+            ext = os.path.splitext(src)[1].lower() or ".img"
+            dst = os.path.join(os.path.dirname(gb.CONF), "wallpaper" + ext)   # a copy: the original may move
+            for old in glob.glob(os.path.join(os.path.dirname(gb.CONF), "wallpaper.*")):
+                os.remove(old)
+            shutil.copyfile(src, dst)
+            if gb.load_picture(dst) is None:
+                self.update_status("That file isn't a picture letterbox can read.")
+                return
+            self.c.update(bg_image=dst, bg_image_name=os.path.basename(src), background="image")
+            self.picture_set(bg_zoom=1.0, bg_x=0.5, bg_y=0.5, save=True)
+            self.picture_label()
+        dlg.open(self, None, done)
+
+    def picture_set(self, save=False, **kw):
+        self.c.update(kw)
+        self._pic_sync = True
+        for k, sc in self.pic_sliders.items():
+            if k in kw:
+                sc.set_value(kw[k])
+        self._pic_sync = False
+        self.pic_area.queue_draw()
+        if save:
+            self.changed()
+        else:
+            self.area.queue_draw()
+
+    def editor_geometry(self, aw, ah):
+        """Picture placement in the editor: (surface, scale, x0, y0, crop rect in picture px)."""
+        surf = gb.load_picture(self.c.get("bg_image"))
+        if surf is None:
+            return None
+        iw, ih = surf.get_width(), surf.get_height()
+        k = min(aw / iw, ah / ih)
+        bw, bh = self.bar_size()
+        crop = gb.crop_rect(iw, ih, bw / bh, self.c.get("bg_zoom", 1.0), self.c.get("bg_x", 0.5), self.c.get("bg_y", 0.5))
+        return surf, k, (aw - iw * k) / 2, (ah - ih * k) / 2, crop
+
+    def draw_picture_editor(self, _a, cr, w, h):
+        geo = self.editor_geometry(w, h)
+        if geo is None:
+            cr.set_source_rgba(1, 1, 1, 0.05)
+            cr.paint()
+            return
+        surf, k, x0, y0, (cx, cy, cw, ch) = geo
+        cr.save()
+        cr.translate(x0, y0)
+        cr.scale(k, k)
+        cr.set_source_surface(surf, 0, 0)
+        cr.get_source().set_filter(cairo.FILTER_GOOD)
+        cr.paint()
+        cr.restore()
+        cr.set_source_rgba(0, 0, 0, 0.6)                   # dim everything outside the frame
+        cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        cr.rectangle(x0, y0, surf.get_width() * k, surf.get_height() * k)
+        cr.rectangle(x0 + cx * k, y0 + cy * k, cw * k, ch * k)
+        cr.fill()
+        cr.set_source_rgb(1, 1, 1)
+        cr.set_line_width(2)
+        cr.rectangle(x0 + cx * k, y0 + cy * k, cw * k, ch * k)
+        cr.stroke()
+
+    def on_picture_drag(self, _g, dx, dy):
+        geo = self.editor_geometry(self.pic_area.get_width(), self.pic_area.get_height())
+        if geo is None:
+            return
+        surf, k, _x0, _y0, (_cx, _cy, cw, ch) = geo
+        free_x, free_y = (surf.get_width() - cw) * k, (surf.get_height() - ch) * k
+        x0, y0 = self._drag0
+        self.picture_set(bg_x=min(1, max(0, x0 + dx / free_x)) if free_x > 1 else 0.5,
+                         bg_y=min(1, max(0, y0 + dy / free_y)) if free_y > 1 else 0.5)
 
     def page_tiles(self):
         """Layout editor: blocks left to right, each with a width and rows of tiles."""

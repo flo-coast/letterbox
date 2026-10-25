@@ -71,6 +71,8 @@ The installer puts the addon in place if you use Nexus (or run `letterbox setup-
 
 - Four themes, your own colours for every tile and text, and your own fonts.
 - An ambient background that picks up the colours at the edge of the game image.
+- Or your own picture as the background. Move and zoom the part you want with the mouse, then darken and
+  blur it until the text reads well.
 - In combat the bar can dim itself or show only warnings like a hot GPU or a ping spike.
 - Profiles, so you can keep one layout for WvW and one for open world.
 - Hotkeys that work in game. **Meta+Shift+B** cycles the bar between full, compact, clock only and off.

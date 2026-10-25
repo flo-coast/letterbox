@@ -1059,29 +1059,87 @@ SETTINGS += [dict(kind="heading", label="Window tile"),
              dict(key="window_tile.command", kind="entry", apply=True, label="Open with",
                   placeholder="google-chrome-stable --app=https://www.nba.com/watch",
                   hint="Clicking the empty tile runs this. For NBA League Pass use Chrome or Firefox, as streams "
-                       "with copy protection don't play anywhere else. Video costs GPU power while you play.")]
+                       "with copy protection don't play anywhere else. Video costs GPU power while you play."),]
 WINDOW_SCRIPT = "letterbox-window-tile"
+FIREFOX_PROFILE = os.path.expanduser("~/.local/share/letterbox/firefox-tile")
+FIREFOX_PREFS = """// letterbox: a Firefox only for the window tile
+user_pref("full-screen-api.ignore-widgets", true);   // a player's fullscreen fills the window, not the screen
+user_pref("media.eme.enabled", true);                // copy protected streams (NBA League Pass, Netflix, ...)
+user_pref("media.gmp-widevinecdm.enabled", true);
+user_pref("media.gmp-widevinecdm.visible", true);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.aboutwelcome.enabled", false);
+"""
 
 
-def window_open(ex, cfg):
+def firefox_settings(win, f):
+    """Button: make the tile's own Firefox profile and use it as the 'Open with' command."""
+    from gi.repository import Gtk
+    box = Gtk.Box(spacing=8)
+    btn = Gtk.Button(label="Use a Firefox made for the tile")
+    note = Gtk.Label(css_classes=["dim-label"], xalign=0, wrap=True, hexpand=True)
+
+    def make(_b):
+        os.makedirs(FIREFOX_PROFILE, exist_ok=True)
+        with open(os.path.join(FIREFOX_PROFILE, "user.js"), "w") as fh:
+            fh.write(FIREFOX_PREFS)
+        wt = dict(win.c.get("window_tile") or {})
+        url = "https://www.nba.com/watch"
+        old = wt.get("command", "")
+        m = re.search(r"https?://\S+", old)
+        if m:
+            url = m.group(0).replace("--app=", "")
+        wt["command"] = f"firefox --no-remote --profile {FIREFOX_PROFILE} --new-window {url}"
+        win.c["window_tile"] = wt
+        win.changed()
+        note.set_text("Done. Restart the settings to see the new command. Log in once in that Firefox.")
+    btn.connect("clicked", make)
+    box.append(btn)
+    box.append(note)
+    return box
+
+
+SETTINGS.append(dict(key="window_tile.firefox", kind="custom", label="", build=firefox_settings,
+                     hint="Its own Firefox profile where a player's fullscreen fills the window instead of the "
+                          "screen, so the video can fill the tile. Your normal Firefox stays untouched. The first "
+                          "time the window opens it's big, to log in and pick a game. Meta+Shift+W puts it in the "
+                          "tile and sets it free again."))
+
+
+def window_click(ex, cfg):
+    """No window yet: open it, free and big for setting up. Otherwise switch between free and in the tile
+    (the tile's title row stays clickable while the window covers the rest)."""
+    if getattr(ex, "window_held", False) or getattr(ex, "window_free", False):
+        window_toggle(ex)
+        return
     cmd = (cfg.get("window_tile") or {}).get("command", "").strip()
     if cmd:
         import shlex
         subprocess.Popen(shlex.split(cmd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
+        ex.window_free = True                             # first set it up (log in, pick a game), then park it
 
 
-@tile("window", "Window", group="net", click=window_open)
+def window_toggle(ex, _arg=None):
+    """Meta+Shift+W or a click: free the window (big, normal) or put it back into the tile."""
+    ex.window_free = not getattr(ex, "window_free", False)
+
+
+@tile("window", "Window", group="net", click=window_click)
 def draw_window(d):
     wt = d.cfg.get("window_tile") or {}
-    if not wt.get("match"):
+    if len(wt.get("match", "").strip()) < 3:
         d.msg("pick a window in the settings (Extras)")
         return
-    d.ex.window_rect = (d.x, d.y, d.w, d.h)              # placed by window_place() after the frame
+    head = d.fh * 0.16                                    # the window covers the heading too: more picture
+    d.ex.window_rect = (d.x, d.y - head, d.w, d.h + head)  # placed by window_place() after the frame
     d.cr.set_source_rgba(1, 1, 1, 0.04)
     d.cr.rectangle(d.x, d.y, d.w, d.h)
     d.cr.fill()
-    d.msg(f"'{wt['match']}' goes here" + (", click to open it" if wt.get("command") else ""))
+    if getattr(d.ex, "window_free", False):
+        d.msg(f"'{wt['match']}' is free to set up. Press Meta+Shift+W or click here to put it in")
+    else:
+        d.msg(f"'{wt['match']}' goes here" + (", click to open it" if wt.get("command") else ""))
 
 
 def _kwin(method, *args, sig=None):
@@ -1124,6 +1182,12 @@ def window_place(bar):
         if getattr(ex, "window_loaded", None):
             window_unload(ex)
         return
+    if getattr(ex, "window_free", False):                 # setting up: a big normal window in the middle
+        if getattr(ex, "window_loaded", None):
+            lw, lh = sc["w"] / sc["scale"], sc["h"] / sc["scale"]
+            window_unload(ex, {"x": sc["x"] + lw * 0.15, "y": sc["y"] + lh * 0.1, "width": lw * 0.7,
+                               "height": lh * 0.8})
+        return
     # bar pixels -> logical screen coordinates; the bar is at the top of the monitor, or under the game
     k = (sc["w"] / sc["scale"]) / max(1, bar.area.get_width())
     top = bar.cfg["height"] / sc["scale"] if bar.cfg.get("position") == "top" else 0
@@ -1150,7 +1214,8 @@ def window_place(bar):
         "}\n"
         "function watch(w) { put(w); w.captionChanged.connect(() => put(w));\n"
         "  w.frameGeometryChanged.connect(() => { if (held === w) put(w); }); }\n"
-        "workspace.windowRemoved.connect(w => { if (held === w) held = null; });\n"
+        "workspace.windowRemoved.connect(w => { if (held === w) { held = null;\n"
+        "  callDBus('letterbox.bar', '/letterbox/bar', 'letterbox.Bar', 'Action', 'window-gone'); } });\n"
         "workspace.windowAdded.connect(watch); workspace.windowList().forEach(watch);\n") % want[1:])
     try:
         _run_script(WINDOW_SCRIPT, js)
@@ -1159,8 +1224,9 @@ def window_place(bar):
         print("letterbox: window tile:", err.message, flush=True)
 
 
-def window_unload(ex):
-    """Unload the tile's script and give the window back: frame on, not pinned on top any more."""
+def window_unload(ex, size=None):
+    """Unload the tile's script and give the window back: frame on, not pinned on top any more, its old size
+    (or `size`)."""
     old = getattr(ex, "window_loaded", None)
     try:
         _kwin("unloadScript", WINDOW_SCRIPT, sig="(s)")
@@ -1168,7 +1234,7 @@ def window_unload(ex):
         pass
     ex.window_loaded = None
     if old:
-        was = getattr(ex, "window_was", None)               # its size before the tile took it
+        was = size or getattr(ex, "window_was", None)       # its size before the tile took it
         size = f"w.frameGeometry = {json.dumps(was)};" if was else ""
         ex.window_was = None
         try:
@@ -1182,6 +1248,7 @@ def window_unload(ex):
 
 
 def window_was(ex, arg):
+    ex.window_held = True
     try:
         g = json.loads(arg)
         ex.window_was = {k: float(g[k]) for k in ("x", "y", "width", "height")}
@@ -1189,7 +1256,11 @@ def window_was(ex, arg):
         pass
 
 
-ACTIONS["window-was"] = window_was
+def window_gone(ex, _arg=None):
+    ex.window_held, ex.window_free = False, False
+
+
+ACTIONS.update({"window-was": window_was, "window-gone": window_gone, "window": window_toggle})
 ON_EXIT.append(lambda bar: window_unload(bar.data.extras))
 AFTER_DRAW.append(window_place)
 

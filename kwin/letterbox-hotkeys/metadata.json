@@ -2,7 +2,7 @@
     "KPlugin": {
         "Id": "letterbox-hotkeys",
         "Name": "letterbox hotkeys",
-        "Description": "GW2 letterbox bar: Meta+Shift+B switches the bar mode, Meta+Shift+M sets a lag marker, Meta+Shift+T starts/stops the run timer",
+        "Description": "GW2 letterbox bar: Meta+Shift+B switches the bar mode, Meta+Shift+M sets a lag marker, Meta+Shift+T starts/stops the run timer, Meta+Shift+W frees or parks the window tile",
         "Authors": [{"Name": "flo-coast"}],
         "Version": "1.0",
         "License": "GPL-3.0"

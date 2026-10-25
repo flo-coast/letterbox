@@ -9,3 +9,6 @@ registerShortcut("letterbox: lag marker", "letterbox: lag marker", "Meta+Shift+M
 registerShortcut("letterbox: run timer", "letterbox: run timer (start / stop)", "Meta+Shift+T", () => {
     callDBus("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Action", "timer");
 });
+registerShortcut("letterbox: window tile", "letterbox: window tile (set free / put back)", "Meta+Shift+W", () => {
+    callDBus("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Action", "window");
+});

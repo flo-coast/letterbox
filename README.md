@@ -93,7 +93,7 @@ The installer puts the addon in place if you use Nexus (or run `letterbox setup-
 - Profiles, so you can keep one layout for WvW and one for open world.
 - Hotkeys that work in game. **Meta+Shift+B** cycles the bar between full, compact, clock only and off.
   **Meta+Shift+M** drops a lag marker (a timestamp in `~/.local/share/letterbox/markers.log`) so you can
-  find that one laggy moment in your logs later. **Meta+Shift+T** starts and stops the run timer tile.
+  find that one laggy moment in your logs later. **Meta+Shift+T** starts and stops the run timer tile. **Meta+Shift+W** sets the window tile's window free and puts it back.
 
 ## Requirements
 

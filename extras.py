@@ -797,3 +797,40 @@ def draw_notify(d):
         rows.append([("t", f"{n['app']} · {when}  ", d.p["accent"] if fresh else d.p["dim"]),
                      ("t", short(text, 100), None if fresh else d.p["dim"])])
     d.lines(rows)
+
+
+# ---------- playtime and break reminder ----------
+DEFAULTS["break_minutes"] = 0
+SETTINGS += [dict(kind="heading", label="Playtime"),
+             dict(key="break_minutes", kind="spin", label="Break reminder after", min=0, max=600, step=15,
+                  hint="Minutes of play in one go, then the playtime tile says it's time for a break. 0 = off.")]
+
+
+def played_today(ex):
+    """Seconds of active game today: the GW2 logger writes one row per second while the game runs."""
+    if time.monotonic() - getattr(ex, "play_at", -99) < 30:
+        return ex.play
+    ex.play_at, n = time.monotonic(), 0
+    import glob
+    for p in glob.glob(f"/var/log/letterbox/gw2-{date.today():%Y%m%d}*.csv"):
+        try:
+            with open(p, "rb") as fh:
+                n += max(0, sum(1 for _ in fh) - 1)
+        except OSError:
+            pass
+    ex.play = n
+    return n
+
+
+@tile("playtime", "Playtime")
+def draw_playtime(d):
+    session = time.time() - d.ex.started
+    today = max(played_today(d.ex), session)
+    top = d.big([("t", hm(today), None, d.r.f_num), ("t", " h today", d.p["dim"])])
+    rows = [[("t", f"this session {hm(session)} h", d.p["dim"])]]
+    brk = d.cfg.get("break_minutes", 0)
+    if brk and session > brk * 60:
+        rows.append([("t", f"time for a break, you've been playing {hm(session)} h", d.ORANGE)])
+    elif brk:
+        rows.append([("t", f"break in {int((brk * 60 - session) // 60) + 1} min", d.p["dim"])])
+    d.lines(rows, top=top)

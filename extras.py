@@ -694,3 +694,51 @@ def draw_music(d):
         d.cr.fill()
     d.r.text(d.cr, f"{m['app']} · {'playing' if playing else 'paused'} · click to {'pause' if playing else 'play'}",
              tx, d.y + d.h * 0.92, tw, d.ssz, d.p["dim"])
+
+
+# ---------- device batteries (UPower: mouse, keyboard, headset, controller, laptop) ----------
+UPOWER_KINDS = {2: "laptop", 5: "mouse", 6: "keyboard", 12: "controller", 17: "headset", 18: "speakers",
+                19: "headphones", 21: "pen", 24: "touchpad"}
+
+
+def batteries(ex):
+    if time.monotonic() - getattr(ex, "batt_at", -99) < 30:
+        return ex.batt
+    ex.batt_at, out = time.monotonic(), []
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+        devs = bus.call_sync("org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.UPower",
+                             "EnumerateDevices", None, None, Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+        for dev in devs:
+            p = bus.call_sync("org.freedesktop.UPower", dev, "org.freedesktop.DBus.Properties", "GetAll",
+                              GLib.Variant("(s)", ("org.freedesktop.UPower.Device",)), None,
+                              Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+            if p.get("Type") in (0, 1) or not p.get("IsPresent", True):          # unknown, power supply
+                continue
+            kind = UPOWER_KINDS.get(p.get("Type"), "device")
+            charging, full = p.get("State") == 1, p.get("State") == 4
+            if kind == "laptop" and (charging or full):
+                continue                                                         # on the charger: no news
+            out.append(dict(kind=kind, name=p.get("Model") or kind, pct=p.get("Percentage", 0), charging=charging,
+                            full=full))
+    except GLib.Error:
+        pass
+    ex.batt = out
+    return out
+
+
+@tile("battery", "Batteries", group="mem")
+def draw_battery(d):
+    bats = batteries(d.ex)
+    if not bats:
+        d.msg("no devices with a battery")
+        return
+    rows = []
+    for b in sorted(bats, key=lambda b: b["pct"]):
+        low = b["pct"] < 15 and not b["charging"]
+        col = d.RED if low else d.ORANGE if b["pct"] < 30 else d.GREEN
+        rows.append([("t", f"{b['pct']:.0f} %", col, d.r.f_num),
+                     ("t", f"  {short(b['name'], 32)}" + ("  charging" if b["charging"] else "  full" if b["full"]
+                                                            else "") +
+                      ("  charge me!" if low else ""), col if low else d.p["dim"])])
+    d.lines(rows, size=max(12, d.ssz * 1.3))

@@ -34,7 +34,7 @@ done
 # ---------- files ----------
 mkdir -p "$DEST/data" "$BIN" ~/.local/share/applications ~/.local/share/kwin/scripts
 install -m755 letterbox bar.py settings.py setup.py "$DEST/"
-install -m644 sensors.py gw2events.py capture.py placement.js "$DEST/"
+install -m644 sensors.py gw2events.py capture.py placement.js extras.py "$DEST/"
 ln -sf "$DEST/letterbox" "$BIN/letterbox"
 ln -sf "$DEST/settings.py" "$BIN/letterbox-settings"
 sed "s|@EXEC@|$DEST/settings.py|" letterbox.settings.desktop > ~/.local/share/applications/letterbox.settings.desktop

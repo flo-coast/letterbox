@@ -38,9 +38,15 @@ function same(a, b) {
            Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
 }
 
+// The GW2 launcher has the same window class as the game but a fixed size: leave it alone (forcing it to
+// game size makes it flicker and jump). The game window itself is resizable.
+function isLauncher(w) {
+    return isGame(w) && !w.resizeable;
+}
+
 function place(w) {
     const t = target(w);
-    if (!t) return;
+    if (!t || isLauncher(w)) return;
     if (w.fullScreen) w.fullScreen = false;
     w.noBorder = true;
     // only the bar stays on top: with the game "above" too, Alt+Tab focused other windows behind it
@@ -61,7 +67,7 @@ function manage(w) {
     later.timeout.connect(() => { const t = target(w); if (t && !same(w.frameGeometry, t)) place(w); });
     const fix = () => {
         const t = target(w);
-        if (!t || same(w.frameGeometry, t)) return;
+        if (!t || isLauncher(w) || same(w.frameGeometry, t)) return;
         const now = Date.now();
         if (now - since > 1000) { since = now; n = 0; }
         if (n++ < 10) place(w);

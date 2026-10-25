@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Letterbox settings
-Comment=GW2 letterbox mode: game size, stats bar, event timer
+Comment=GW2 letterbox mode
 Exec=/usr/bin/python3 @EXEC@
 Icon=video-display
 Categories=Game;Settings;

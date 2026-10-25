@@ -962,7 +962,9 @@ class Renderer:
         num = color(cfg, "number") or (0.86, 0.87, 0.89)
         b = data.bridge
         if not b:
-            self.text(cr, "needs the letterbox bridge addon in Nexus", x, y + h * 0.4, w, ssz, dim)
+            known = data.bridge_file and os.path.exists(data.bridge_file)
+            self.text(cr, "waiting for GW2" if known else "needs the letterbox bridge addon in Nexus", x,
+                      y + h * 0.4, w, ssz, dim)
             return
         if not b.get("rtapi"):
             self.text(cr, "install RealTime API from the Nexus library", x, y + h * 0.4, w, ssz, dim)

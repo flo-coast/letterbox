@@ -5,6 +5,7 @@
 #   setup.py mangohud            make MangoHud log GW2's frames for the FPS tiles
 #   setup.py gfx                 find GW2's graphics settings outside Steam and remember the path
 #   setup.py bridge              put the letterbox bridge addon into GW2's addons folder (needs Nexus)
+#   setup.py overlay hide|show   MangoHud's overlay off in letterbox mode (the bar shows it all), back for fullscreen
 import glob, json, os, re, shutil, subprocess, sys, time
 
 HOME = os.path.expanduser("~")
@@ -207,6 +208,36 @@ def mangohud():
     return 0
 
 
+# ---------- MangoHud overlay: hidden while letterbox mode is on ----------
+OVERLAY_MARK = "# letterbox: overlay hidden in letterbox mode (the bar shows FPS and sensors), toggle_hud shows it"
+
+
+def overlay(action):
+    """letterbox on/off: GW2's MangoHud config gets no_display (logging and the FPS limit keep working), or
+    loses it again. Only the lines letterbox added are touched."""
+    f = f"{MANGO_DIR}/wine-Gw2-64.conf"
+    if not os.path.exists(f):
+        return 0
+    lines = open(f).read().splitlines()
+    out, skip = [], False
+    for ln in lines:                                       # drop what letterbox added before
+        if ln == OVERLAY_MARK:
+            skip = True
+            continue
+        if skip and ln.strip() == "no_display":
+            skip = False
+            continue
+        skip = False
+        out.append(ln)
+    if action == "hide":
+        out += [OVERLAY_MARK, "no_display"]
+    with open(f + ".tmp", "w") as fh:
+        fh.write("\n".join(out) + "\n")
+    os.replace(f + ".tmp", f)
+    print("MangoHud overlay:", "hidden in letterbox mode" if action == "hide" else "shown again")
+    return 0
+
+
 # ---------- GW2 outside Steam ----------
 def find_gfx():
     """GFXSettings.Gw2-64.exe.xml in the usual Wine prefixes of Lutris, Heroic, Bottles and plain Wine."""
@@ -365,4 +396,6 @@ if __name__ == "__main__":
     cmd = sys.argv[1:] or ["doctor"]
     if cmd[0] == "launch" and len(cmd) > 1 and cmd[1] in ("add", "remove"):
         sys.exit(launch(cmd[1]))
+    if cmd[0] == "overlay" and len(cmd) > 1 and cmd[1] in ("hide", "show"):
+        sys.exit(overlay(cmd[1]))
     sys.exit({"doctor": doctor, "mangohud": mangohud, "gfx": gfx, "bridge": bridge}.get(cmd[0], doctor)())

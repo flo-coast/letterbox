@@ -114,10 +114,12 @@ on)
     [ -f "$FLAG" ] || swap_profile letterbox
     set_screenmode windowed
     mkdir -p "$(dirname "$FLAG")" && touch "$FLAG" && set_height "$h"
+    python3 "$DIR/setup.py" overlay hide        # the bar shows FPS and sensors, the overlay would cover the game
     log "on: GW2 ${W}x$h on $out, stats bar in the rest (next GW2 start)" ;;
 off)
     [ -f "$FLAG" ] && swap_profile fullscreen
     set_screenmode fullscreen
+    python3 "$DIR/setup.py" overlay show
     rm -f "$FLAG"
     log "off: GW2 back to fullscreen" ;;
 status)

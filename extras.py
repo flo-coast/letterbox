@@ -834,3 +834,57 @@ def draw_playtime(d):
     elif brk:
         rows.append([("t", f"break in {int((brk * 60 - session) // 60) + 1} min", d.p["dim"])])
     d.lines(rows, top=top)
+
+
+# ---------- weather (Open-Meteo, no account needed) ----------
+DEFAULTS["weather_city"] = ""
+SETTINGS += [dict(kind="heading", label="Weather"),
+             dict(key="weather_city", kind="entry", label="Town", placeholder="e.g. Hamburg",
+                  hint="For the weather tile, from open-meteo.com.")]
+WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "fog", 51: "drizzle",
+       53: "drizzle", 55: "drizzle", 56: "freezing drizzle", 57: "freezing drizzle", 61: "light rain", 63: "rain",
+       65: "heavy rain", 66: "freezing rain", 67: "freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow",
+       77: "snow grains", 80: "showers", 81: "showers", 82: "heavy showers", 85: "snow showers",
+       86: "snow showers", 95: "thunderstorm", 96: "thunderstorm with hail", 99: "thunderstorm with hail"}
+
+
+def fetch_weather(ex):
+    city = ex.cfg.get("weather_city", "").strip()
+    geo = load_json("geo.json", {})
+    if city not in geo:
+        g = http_json("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(city))
+        if not g.get("results"):
+            raise ValueError(f"'{city}' not found")
+        r = g["results"][0]
+        geo[city] = [r["latitude"], r["longitude"], r["name"]]
+        save_json("geo.json", geo)
+    lat, lon, name = geo[city]
+    w = http_json(f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&timezone=auto"
+                  "&current=temperature_2m,weather_code,wind_speed_10m&hourly=precipitation_probability"
+                  "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1")
+    return dict(w, place=name, city=city)
+
+
+@tile("weather", "Weather", group="net")
+def draw_weather(d):
+    if not d.cfg.get("weather_city", "").strip():
+        d.msg("set your town in the settings (Extras)")
+        return
+    pl = d.ex.poll("weather", fetch_weather, 900)
+    if pl.value and pl.value["city"] != d.cfg["weather_city"].strip():
+        pl.value, pl.err = None, "loading…"                # town changed
+    if d.waiting(pl):
+        return
+    v = pl.value
+    cur, day = v["current"], v["daily"]
+    top = d.big([("t", f"{cur['temperature_2m']:.0f}", None, d.r.f_num), ("t", " °C"),
+                 ("t", f"   {WMO.get(cur['weather_code'], '')}", d.p["dim"])])
+    rows = [[("t", f"{v['place']} · {day['temperature_2m_min'][0]:.0f} to {day['temperature_2m_max'][0]:.0f} °C · "
+                   f"wind {cur['wind_speed_10m']:.0f} km/h", d.p["dim"])]]
+    hrs, now_h = v.get("hourly", {}), datetime.now().hour
+    rain = [(t[11:16], p) for t, p in zip(hrs.get("time", []), hrs.get("precipitation_probability", []))
+            if int(t[11:13]) > now_h and p is not None and p >= 50]
+    wet = cur["weather_code"] >= 51
+    rows.append([("t", f"rain likely from {rain[0][0]} ({rain[0][1]} %)" if rain else
+                  f"no {'more ' if wet else ''}rain expected today", d.p["accent"] if rain else d.p["dim"])])
+    d.lines(rows, top=top)

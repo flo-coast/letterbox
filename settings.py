@@ -205,9 +205,9 @@ class Settings(Gtk.ApplicationWindow):
     def write_profile(self, name):
         self.c["profile"] = name
         self.changed()
-        os.makedirs(PROFILES, exist_ok=True)
-        with open(os.path.join(PROFILES, name + ".json"), "w") as fh:
-            json.dump(self.c, fh, indent=1)
+        # a profile is a look: without secrets and without this machine's monitor, GPU and paths
+        gb.write_private_json(os.path.join(PROFILES, name + ".json"),
+                              {k: v for k, v in self.c.items() if k not in gb.PRIVATE_KEYS + gb.MACHINE_KEYS})
         self.refresh_profiles(name)
         self.sync_prof_button()
         self.update_status(f"Saved profile '{name}'.")
@@ -242,8 +242,11 @@ class Settings(Gtk.ApplicationWindow):
         with open(os.path.join(PROFILES, name + ".json")) as src:
             prof = json.load(src)
         prof["profile"] = name                     # older profiles were saved without their own name
-        with open(gb.CONF, "w") as dst:
-            json.dump(prof, dst, indent=1)
+        for k in gb.PRIVATE_KEYS + gb.MACHINE_KEYS:   # the key, monitor, GPU and paths stay as they are
+            prof.pop(k, None)
+            if k in self.c:
+                prof[k] = self.c[k]
+        gb.save_config(prof)
         if self.test.get_active():
             self.stop_test()
         self.rebuild(f"Loaded profile '{name}'. Game size and position apply at the next GW2 start.", name)
@@ -1181,10 +1184,7 @@ class Settings(Gtk.ApplicationWindow):
 
     def changed(self):
         self.data.graph_seconds = self.c.get("graph_seconds", 60)
-        os.makedirs(os.path.dirname(gb.CONF), exist_ok=True)
-        with open(os.open(gb.CONF, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:   # may hold the API key
-            json.dump(self.c, fh, indent=1)
-        os.chmod(gb.CONF, 0o600)
+        gb.save_config(self.c)                                      # private: may hold the API key
         Gio.bus_get_sync(Gio.BusType.SESSION).call("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Reload", None,
                                                     None, Gio.DBusCallFlags.NONE, 500, None, None)
         self.area.queue_draw()

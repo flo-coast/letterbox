@@ -36,7 +36,9 @@ set_height() {
 try: c=json.load(open(sys.argv[1]))
 except Exception: c={}
 c["height"]=int(sys.argv[2]); os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
-json.dump(c, open(sys.argv[1],"w"), indent=1)' "$CONF" "$1"
+t = sys.argv[1] + ".tmp"   # readable only by you (API key), atomic
+with os.fdopen(os.open(t, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh: json.dump(c, fh, indent=1)
+os.replace(t, sys.argv[1])' "$CONF" "$1"
 }
 
 # GW2's graphics settings: "gfx_settings" in the config, else the Steam version's file in any Steam library

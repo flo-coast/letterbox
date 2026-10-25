@@ -89,6 +89,25 @@ DEFAULTS = {
 DEFAULTS.update(extras.DEFAULTS)
 
 
+# Not part of a profile: secrets, and what belongs to this machine rather than to a look
+PRIVATE_KEYS = ("api_key", "calendar_ics")
+MACHINE_KEYS = ("output", "gpu", "gfx_settings", "game_dir", "mangohud_dir", "bridge_file")
+
+
+def write_private_json(path, data):
+    """Write JSON readable only by you, atomically (a reader never sees half a file)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+        json.dump(data, fh, indent=1)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def save_config(cfg):
+    write_private_json(CONF, cfg)
+
+
 def load_config():
     try:
         c = json.load(open(CONF))

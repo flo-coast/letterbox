@@ -25,8 +25,11 @@ def load_conf():
 
 
 def save_conf(c):
+    """Like bar.save_config: readable only by you (the config may hold the API key), atomic."""
     os.makedirs(os.path.dirname(CONF), exist_ok=True)
-    json.dump(c, open(CONF, "w"), indent=1)
+    with os.fdopen(os.open(CONF + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+        json.dump(c, fh, indent=1)
+    os.replace(CONF + ".tmp", CONF)
 
 
 def steam_running():

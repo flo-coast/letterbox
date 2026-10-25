@@ -519,20 +519,21 @@ class Settings(Gtk.ApplicationWindow):
             self.changed()
         self.row(g, 0, "Style", dropdown(CLOCK_STYLES, ck.get("style", "digital"), lambda v: setc("style", v)))
         for r, (k, name) in enumerate((("h24", "24-hour format"), ("seconds", "Seconds"), ("date", "Date"),
-                                        ("tyria", "Tyria day/night"), ("resets", "Daily / weekly reset")), 1):
-            cb = Gtk.CheckButton(label=name, active=ck.get(k, k in ("h24", "tyria", "resets")))
+                                        ("tyria", "Tyria day/night"), ("resets", "Daily / weekly reset"),
+                                        ("birthdays", "Character birthdays today or tomorrow (API key)")), 1):
+            cb = Gtk.CheckButton(label=name, active=ck.get(k, k in ("h24", "tyria", "resets", "birthdays")))
             cb.connect("toggled", lambda w, k=k: setc(k, w.get_active()))
             g.attach(cb, 1, r, 1, 1)
         size = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.6, 1.6, 0.05)
         size.set_value(ck.get("size", 1.0))
         size.set_hexpand(True)
         size.connect("value-changed", lambda w: setc("size", round(w.get_value(), 2)))
-        self.row(g, 6, "Size", size)
+        self.row(g, 7, "Size", size)
         cbtn = swatch(self.current_hex("clock"), lambda w, _p: self.on_color(w, _p, "clock"))
         self.color_buttons["clock"] = cbtn
-        self.row(g, 7, "Colour", cbtn)
+        self.row(g, 8, "Colour", cbtn)
         g.attach(Gtk.Label(label="Tyria time: 2 h cycle, day from every even UTC hour + 30 min.", xalign=0,
-                           wrap=True, css_classes=["dim-label"]), 0, 8, 3, 1)
+                           wrap=True, css_classes=["dim-label"]), 0, 9, 3, 1)
         return sc
 
     def page_events(self):

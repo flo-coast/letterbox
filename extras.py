@@ -1131,3 +1131,18 @@ def window_unload(ex):
 
 
 AFTER_DRAW.append(window_place)
+
+
+def birthdays_soon(ex):
+    """[(name, years, days)] of characters whose birthday is today (0) or tomorrow (1), for the clock."""
+    if not ex.key:
+        return []
+    v = ex.poll("chars", fetch_chars, 3600).value
+    today, out = date.today(), []
+    for c in (v or {}).get("chars", []):
+        made = datetime.fromisoformat(c["created"].replace("Z", "+00:00")).astimezone().date()
+        for days in (0, 1):
+            day = today + timedelta(days=days)
+            if (made.month, made.day) == (day.month, day.day) and day.year > made.year:
+                out.append((c["name"], day.year - made.year, days))
+    return sorted(out, key=lambda b: b[2])                   # today first

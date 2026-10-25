@@ -64,7 +64,7 @@ DEFAULTS = {
     "ambient_dim": 0.35, "ambient_rate": 4,
     "brightness": 1.0,
     "clock": {"style": "digital", "h24": True, "seconds": False, "date": False, "tyria": True,
-              "resets": True, "size": 1.0, "show": True},
+              "resets": True, "size": 1.0, "show": True, "birthdays": True},
     "tile_opts": {},                       # per tile: {"number": bool, "graph": bool}
     "event_sections": ["World bosses", "Hard world bosses"],   # rows of the event timeline tile
     "event_auto_map": True,                # + the meta of the map you are on, if the data has one
@@ -709,7 +709,7 @@ NO_ALERT = {"Day and night", "Cantha: Day and night"}       # cycles, not events
 class Renderer:
     def __init__(self):
         self.flash_until = 0
-        self.hits = []
+        self.hits, self.data = [], None
         self.alerted = set()                  # events the sound was played for
 
     def alert(self, cfg, data):
@@ -740,6 +740,7 @@ class Renderer:
         return next((k for k, x, y, w, h in self.hits if x <= px < x + w and y <= py < y + h), None)
 
     def draw(self, cr, w, h, cfg, data, mode, ambient_cols=None):
+        self.data = data                      # for the clock's lines
         self.hits = []                        # clickable tiles of this frame: (key, x, y, w, h)
         self.f_text = cfg.get("font_text") or "sans"
         self.f_num = cfg.get("font_number") or "monospace"
@@ -1302,6 +1303,9 @@ class Renderer:
         if c.get("resets", True):
             d, wk = resets(utc)
             lines.append(f"daily reset {int(d // 60)}:{int(d % 60):02d} · weekly {int(wk // 1440)}d {int(wk // 60 % 24)}h")
+        if c.get("birthdays", True) and self.data is not None:      # only when there is one today or tomorrow
+            for name, years, days in extras.birthdays_soon(self.data.extras):
+                lines.append((f"{name} turns {years} {'today!' if days == 0 else 'tomorrow'}", (1.0, 0.8, 0.3)))
         if style == "minimal":
             lines = []
         al = self.alert(cfg, None)
@@ -1325,7 +1329,8 @@ class Renderer:
                 cr.paint_with_alpha(pulse)
                 ty += line_size * 1.6
             for ln in lines:
-                self.text(cr, ln, x0, ty + line_size, width, line_size, dim, align=align)
+                txt, lc = ln if isinstance(ln, tuple) else (ln, dim)     # (text, colour) for highlighted lines
+                self.text(cr, txt, x0, ty + line_size, width, line_size, lc, align=align)
                 ty += line_size * 1.4
 
         info_h = (line_size * 1.6 if alert else 0) + len(lines) * line_size * 1.4

@@ -625,3 +625,72 @@ def draw_timer(d):
     if runs:
         rows.append([("t", "last runs  " + "   ".join(clock(s).split(".")[0] for s in runs[:6]), d.p["dim"])])
     d.lines(rows, top=size * 1.3)
+
+
+# ---------- now playing (MPRIS: Spotify, Deezer or YouTube in the browser, any player) ----------
+def now_playing(ex):
+    """The playing (else the paused) player's title, artist, cover, position; looked up at most once a second."""
+    if time.monotonic() - getattr(ex, "music_at", 0) < 1:
+        return ex.music
+    ex.music_at, best = time.monotonic(), None
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        names = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames",
+                              None, None, Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
+        for n in (n for n in names if n.startswith("org.mpris.MediaPlayer2.")):
+            try:
+                pr = bus.call_sync(n, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "GetAll",
+                                   GLib.Variant("(s)", ("org.mpris.MediaPlayer2.Player",)), None,
+                                   Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
+            except GLib.Error:
+                continue
+            md = pr.get("Metadata", {})
+            if not md.get("xesam:title"):
+                continue
+            cur = dict(player=n, status=pr.get("PlaybackStatus", ""), title=md["xesam:title"],
+                       artist=", ".join(md.get("xesam:artist") or []), art=md.get("mpris:artUrl", ""),
+                       length=(md.get("mpris:length") or 0) / 1e6, pos=(pr.get("Position") or 0) / 1e6,
+                       app=n.split(".")[3])
+            if best is None or (cur["status"] == "Playing" and best["status"] != "Playing"):
+                best = cur
+    except GLib.Error:
+        pass
+    ex.music = best
+    return best
+
+
+def music_toggle(ex, _cfg=None):
+    m = getattr(ex, "music", None)
+    if m:
+        Gio.bus_get_sync(Gio.BusType.SESSION).call(m["player"], "/org/mpris/MediaPlayer2",
+                                                   "org.mpris.MediaPlayer2.Player", "PlayPause", None, None,
+                                                   Gio.DBusCallFlags.NONE, 500, None, None)
+        ex.music_at = 0
+
+
+@tile("music", "Now playing", group="mem", click=music_toggle)
+def draw_music(d):
+    m = now_playing(d.ex)
+    if not m:
+        d.msg("nothing playing")
+        return
+    tx = d.x
+    if m["art"]:
+        a = min(d.h, d.w * 0.3)
+        draw_icon(d.cr, ICONS.get(m["art"]), d.x, d.y + (d.h - a) / 2, a)
+        tx = d.x + a + d.ssz
+    tw = d.x + d.w - tx
+    size = min(d.fh * 0.16, d.h * 0.22)
+    playing = m["status"] == "Playing"
+    d.r.text(d.cr, m["title"], tx, d.y + d.h * 0.28, tw, size, d.p["num"] if playing else d.p["dim"])
+    d.r.text(d.cr, m["artist"] or m["app"], tx, d.y + d.h * 0.28 + size * 1.35, tw, size * 0.8, d.p["dim"])
+    if m["length"] > 0:
+        by, bh = d.y + d.h * 0.7, max(3, d.h * 0.03)
+        d.cr.set_source_rgba(1, 1, 1, 0.12)
+        d.cr.rectangle(tx, by, tw, bh)
+        d.cr.fill()
+        d.cr.set_source_rgb(*d.p["accent"])
+        d.cr.rectangle(tx, by, tw * min(1, m["pos"] / m["length"]), bh)
+        d.cr.fill()
+    d.r.text(d.cr, f"{m['app']} · {'playing' if playing else 'paused'} · click to {'pause' if playing else 'play'}",
+             tx, d.y + d.h * 0.92, tw, d.ssz, d.p["dim"])

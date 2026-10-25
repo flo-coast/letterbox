@@ -6,3 +6,6 @@ registerShortcut("letterbox: bar mode", "letterbox: bar mode (full / compact / c
 registerShortcut("letterbox: lag marker", "letterbox: lag marker", "Meta+Shift+M", () => {
     callDBus("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Mark");
 });
+registerShortcut("letterbox: run timer", "letterbox: run timer (start / stop)", "Meta+Shift+T", () => {
+    callDBus("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Action", "timer");
+});

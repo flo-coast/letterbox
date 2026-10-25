@@ -588,3 +588,40 @@ def draw_gems(d):
         ch = (v["per_gem"] - v["yesterday"]) / v["yesterday"] * 100
         rows.append([("t", f"gems {'+' if ch >= 0 else ''}{ch:.1f} % since yesterday", d.RED if ch > 0 else d.GREEN)])
     d.lines(rows, top=top)
+
+
+# ---------- run timer (click or Meta+Shift+T) ----------
+def timer_toggle(ex, _cfg=None):
+    runs = getattr(ex, "timer_runs", None)
+    if runs is None:
+        runs = ex.timer_runs = load_json("timer-runs.json", [])
+    if getattr(ex, "timer_start", None) is None:
+        ex.timer_start = time.time()
+    else:
+        ex.timer_runs = ([round(time.time() - ex.timer_start, 1)] + runs)[:10]
+        ex.timer_start = None
+        save_json("timer-runs.json", ex.timer_runs)
+
+
+ACTIONS["timer"] = timer_toggle
+
+
+def clock(s):
+    return f"{int(s // 3600)}:{int(s // 60 % 60):02d}:{int(s % 60):02d}" if s >= 3600 else f"{int(s // 60)}:{s % 60:04.1f}"
+
+
+@tile("timer", "Run timer", click=timer_toggle)
+def draw_timer(d):
+    ex = d.ex
+    runs = getattr(ex, "timer_runs", None)
+    if runs is None:
+        runs = ex.timer_runs = load_json("timer-runs.json", [])
+    start = getattr(ex, "timer_start", None)
+    t = time.time() - start if start else (runs[0] if runs else 0)
+    size = min(d.fh * 0.3, d.h * 0.42)
+    d.r.text(d.cr, clock(t), d.x, d.y + size, d.w, size, d.GREEN if start else d.p["num"], face=d.r.f_num)
+    rows = [[("t", ("running, click or Meta+Shift+T to stop" if start else "click or Meta+Shift+T to start"),
+              d.p["dim"])]]
+    if runs:
+        rows.append([("t", "last runs  " + "   ".join(clock(s).split(".")[0] for s in runs[:6]), d.p["dim"])])
+    d.lines(rows, top=size * 1.3)

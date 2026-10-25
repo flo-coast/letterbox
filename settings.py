@@ -735,6 +735,7 @@ class Settings(Gtk.ApplicationWindow):
             "busy · ping ≥ 150 ms · 1 % low below 20 FPS.\n\n"
             "Hotkeys (KDE, work in fullscreen too):\n"
             "  Meta+Shift+B   bar layout: full → compact → clock → off\n"
+            "  Meta+Shift+T   run timer (tile 'Run timer'): start / stop\n"
             "  Meta+Shift+M   lag marker: notes the time (sound + red flash) in\n"
             "                 ~/.local/share/letterbox/markers.log, to find laggy moments in your logs later\n"
             "Change them in System Settings → Shortcuts (search 'letterbox')."), xalign=0, wrap=True), 0, 2, 3, 1)

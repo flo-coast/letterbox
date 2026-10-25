@@ -1069,7 +1069,30 @@ user_pref("media.gmp-widevinecdm.enabled", true);
 user_pref("media.gmp-widevinecdm.visible", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);   // for the hidden toolbars below
 """
+# toolbars out of the way (more room for the video), back when the mouse touches the window's top edge
+FIREFOX_CSS = """/* letterbox: the tile's Firefox shows only the page; the toolbars slide in at the top edge */
+#navigator-toolbox { margin-top: -88px !important; opacity: 0; transition: margin-top .15s, opacity .15s; z-index: 10; }
+#navigator-toolbox:hover, #navigator-toolbox:focus-within { margin-top: 0 !important; opacity: 1; }
+"""
+
+
+def setup_firefox_profile():
+    """The tile's own Firefox profile (made or brought up to date). -> the profile folder."""
+    os.makedirs(os.path.join(FIREFOX_PROFILE, "chrome"), exist_ok=True)
+    with open(os.path.join(FIREFOX_PROFILE, "user.js"), "w") as fh:
+        fh.write(FIREFOX_PREFS)
+    with open(os.path.join(FIREFOX_PROFILE, "chrome", "userChrome.css"), "w") as fh:
+        fh.write(FIREFOX_CSS)
+    return FIREFOX_PROFILE
+
+
+def firefox_command(old_command):
+    """'Open with' for the tile's Firefox, keeping the page of the old command."""
+    m = re.search(r"https?://\S+", old_command or "")
+    url = m.group(0) if m else "https://www.nba.com/watch"
+    return f"firefox --no-remote --profile {setup_firefox_profile()} --new-window {url}"
 
 
 def firefox_settings(win, f):
@@ -1080,16 +1103,8 @@ def firefox_settings(win, f):
     note = Gtk.Label(css_classes=["dim-label"], xalign=0, wrap=True, hexpand=True)
 
     def make(_b):
-        os.makedirs(FIREFOX_PROFILE, exist_ok=True)
-        with open(os.path.join(FIREFOX_PROFILE, "user.js"), "w") as fh:
-            fh.write(FIREFOX_PREFS)
         wt = dict(win.c.get("window_tile") or {})
-        url = "https://www.nba.com/watch"
-        old = wt.get("command", "")
-        m = re.search(r"https?://\S+", old)
-        if m:
-            url = m.group(0).replace("--app=", "")
-        wt["command"] = f"firefox --no-remote --profile {FIREFOX_PROFILE} --new-window {url}"
+        wt["command"] = firefox_command(wt.get("command", ""))
         win.c["window_tile"] = wt
         win.changed()
         note.set_text("Done. Restart the settings to see the new command. Log in once in that Firefox.")

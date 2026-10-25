@@ -4,7 +4,8 @@
 #   setup.py launch add|remove   put "letterbox run" into GW2's Steam launch options (Steam must be closed)
 #   setup.py mangohud            make MangoHud log GW2's frames for the FPS tiles
 #   setup.py gfx                 find GW2's graphics settings outside Steam and remember the path
-import glob, json, os, re, shutil, subprocess, sys
+#   setup.py bridge              put the letterbox bridge addon into GW2's addons folder (needs Nexus)
+import glob, json, os, re, shutil, subprocess, sys, time
 
 HOME = os.path.expanduser("~")
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -229,6 +230,47 @@ def gfx():
     return 1
 
 
+# ---------- Nexus bridge addon ----------
+BRIDGE_URL = "https://github.com/flo-coast/letterbox/releases/latest/download/letterbox_bridge.dll"
+
+
+def game_dir():
+    sys.path.insert(0, DIR)
+    import bar
+    for lib in bar.steam_libraries():
+        d = f"{lib}/steamapps/common/Guild Wars 2"
+        if os.path.exists(f"{d}/Gw2-64.exe"):
+            return d
+    p = bar.load_config().get("bridge_file")
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.expanduser(p)))) if p else None
+
+
+def bridge():
+    """Downloads the bridge DLL from the latest release (or uses one built locally in nexus-bridge/)."""
+    import urllib.request
+    g = game_dir()
+    if not g or not os.path.isdir(f"{g}/addons/Nexus"):
+        print("Nexus isn't installed in GW2, so the bridge addon is skipped (the squad tile needs it).")
+        return 1
+    local = f"{DIR}/nexus-bridge/letterbox_bridge.dll"
+    if os.path.exists(local):
+        data = open(local, "rb").read()
+    else:
+        with urllib.request.urlopen(BRIDGE_URL, timeout=30) as r:
+            data = r.read()
+    if data[:2] != b"MZ":
+        print("the download isn't a Windows DLL, skipped")
+        return 1
+    dst = f"{g}/addons/letterbox_bridge.dll"
+    with open(dst + ".part", "wb") as fh:
+        fh.write(data)
+    os.replace(dst + ".part", dst)
+    print(f"bridge addon: {dst}")
+    print("  In GW2 open Nexus (the icon at the top left), load 'letterbox bridge' and install")
+    print("  'RealTime API' from the Nexus library. The squad tile shows up in the settings under Tiles.")
+    return 0
+
+
 # ---------- doctor ----------
 def doctor():
     sys.path.insert(0, DIR)
@@ -288,6 +330,13 @@ def doctor():
                                 "letterbox run is missing, fix with: letterbox setup-launch"))
     line(True if os.path.exists(f"{HOME}/.config/letterbox/enabled") else None, "Letterbox mode",
          "on" if os.path.exists(f"{HOME}/.config/letterbox/enabled") else "off, turn it on with: letterbox on")
+    g = game_dir()
+    if g and os.path.isdir(f"{g}/addons/Nexus"):
+        has = os.path.exists(f"{g}/addons/letterbox_bridge.dll")
+        bf = bar.bridge_path(cfg)
+        live = bool(bf) and os.path.exists(bf) and time.time() - os.path.getmtime(bf) < 5
+        line(True if has else None, "Nexus bridge", ("running" if live else "installed, writes while GW2 runs")
+             if has else "not installed (squad tile), fix with: letterbox setup-bridge")
     line(True if bar.HAS_PROBE else None, "Apple SMC tiles", "t2pm probe found" if bar.HAS_PROBE else
          "no t2pm probe (only on T2 MacBooks)")
     return 0 if ok else 1
@@ -321,4 +370,4 @@ if __name__ == "__main__":
     cmd = sys.argv[1:] or ["doctor"]
     if cmd[0] == "launch" and len(cmd) > 1 and cmd[1] in ("add", "remove"):
         sys.exit(launch(cmd[1]))
-    sys.exit({"doctor": doctor, "mangohud": mangohud, "gfx": gfx}.get(cmd[0], doctor)())
+    sys.exit({"doctor": doctor, "mangohud": mangohud, "gfx": gfx, "bridge": bridge}.get(cmd[0], doctor)())

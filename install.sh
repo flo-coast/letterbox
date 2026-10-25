@@ -65,6 +65,12 @@ if ask "Install it (sudo)?"; then
 fi
 
 echo
+if [ -n "$(python3 -c "import sys; sys.path.insert(0, '$DEST'); import setup, os; g = setup.game_dir(); print(g if g and os.path.isdir(g + '/addons/Nexus') else '')" 2>/dev/null)" ]; then
+    echo "You use Nexus. The letterbox bridge addon hands your squad (size, commander, professions) to the bar."
+    if ask "Put it into GW2's addons folder?"; then python3 "$DEST/setup.py" bridge || true; fi
+    echo
+fi
+
 rc=0
 python3 "$DEST/setup.py" launch add || rc=$?
 if [ $rc = 2 ] && ask "Close Steam now so letterbox can set GW2's launch option?"; then

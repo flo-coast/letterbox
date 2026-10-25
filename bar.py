@@ -55,6 +55,7 @@ DEFAULTS = {
     "gpu": "",                             # PCI address of the GPU to show (e.g. "0000:03:00.0"); empty = auto
     "mangohud_dir": "~/.local/share/letterbox/mangohud",   # MangoHud output_folder (FPS tiles)
     "api_key": "",                         # GW2 API key ("account" permission): finds your WvW team
+    "bridge_file": "",                     # bridge.json of the Nexus addon; empty = GW2 in a Steam library
     "graph_seconds": 60,
     "theme": "classic", "colors": {},         # colors: overrides per group/role or per tile key
     "background": "black",                 # black | ambient
@@ -353,6 +354,33 @@ class WvW:
         return out
 
 
+PROFESSIONS = {1: ("Guardian", (0.45, 0.76, 0.85)), 2: ("Warrior", (1.0, 0.82, 0.4)),
+               3: ("Engineer", (0.82, 0.61, 0.35)), 4: ("Ranger", (0.55, 0.86, 0.51)),
+               5: ("Thief", (0.75, 0.56, 0.58)), 6: ("Elementalist", (0.96, 0.54, 0.53)),
+               7: ("Mesmer", (0.71, 0.47, 0.84)), 8: ("Necromancer", (0.32, 0.65, 0.44)),
+               9: ("Revenant", (0.82, 0.43, 0.35))}
+
+
+def steam_libraries():
+    libs = [os.path.expanduser(p) for p in ("~/.local/share/Steam", "~/.steam/steam")]
+    for vdf in (f"{lib}/steamapps/libraryfolders.vdf" for lib in list(libs)):
+        try:
+            libs += re.findall(r'"path"\s*"([^"]+)"', open(vdf).read())
+        except OSError:
+            pass
+    return list(dict.fromkeys(libs))
+
+
+def bridge_path(cfg):
+    if cfg.get("bridge_file"):
+        return os.path.expanduser(cfg["bridge_file"])
+    for lib in steam_libraries():
+        p = f"{lib}/steamapps/common/Guild Wars 2/addons/letterbox/bridge.json"
+        if os.path.isdir(os.path.dirname(os.path.dirname(p))):
+            return p
+    return None
+
+
 def compass(deg):
     if deg is None:
         return "-"
@@ -373,6 +401,8 @@ class Data:
         self.gpu_dev = self.sensors.gpu
         self.pings = deque(maxlen=60)
         self.wvw = WvW()
+        self.bridge_file = bridge_path(cfg)
+        self.bridge = None                    # latest bridge.json of the Nexus addon, or None
         self.hist = {}
         self.graph_seconds = graph_seconds
         self.probe = self.mumble = None
@@ -459,6 +489,12 @@ class Data:
         if v["ping"] is not None:
             self.pings.append(v["ping"])
         sub["ping"] = f"avg {sum(self.pings) / len(self.pings):.0f} ms (60 s)" if self.pings else "-"
+        self.bridge = None
+        try:
+            if self.bridge_file and time.time() - os.path.getmtime(self.bridge_file) < 5:
+                self.bridge = json.load(open(self.bridge_file))
+        except (OSError, ValueError):
+            pass
         self.in_combat = g.get("in_combat") == "1"
         try:
             self.wvw.world = int(g.get("world_id") or 0) or None
@@ -536,6 +572,7 @@ TILES = {
     "events": ("Event timer", "", 0, "game", "events"),
     "wvw": ("WvW matchup", "", 0, "game", "wvw"),
     "wvwmap": ("WvW map", "", 0, "game", "wvwmap"),
+    "squad": ("Squad", "", 0, "game", "squad"),
     "cpu": ("CPU", "MHz", 5000, "cpu", "num"),
     "pkg": ("CPU package", "W", 60, "cpu", "num"),
     "ctemp": ("CPU temp", "°C", 105, "cpu", "num"),
@@ -873,6 +910,9 @@ class Renderer:
             return
         if data is None:
             return
+        if kind == "squad":
+            self.squad_tile(cr, x, y + fh * 0.16, w, h - fh * 0.16, fh, ssz, cfg, data)
+            return
         if kind in ("wvw", "wvwmap"):
             data.wvw.touch(cfg.get("api_key", ""))
             draw = self.wvw_tile if kind == "wvw" else self.wvwmap_tile
@@ -918,6 +958,57 @@ class Renderer:
         self.number_line(cr, x, y + h * 0.38, w, fh * 0.26, parts)
         self.text(cr, sub, x, y + h * 0.5, w, ssz, dim)
         self.graph(cr, x, y + h * 0.58, w, h * 0.42, key, gmax, col, dim, cfg, data)
+
+    def squad_tile(self, cr, x, y, w, h, fh, ssz, cfg, data):
+        """Squad or party from the Nexus bridge: size, commander, your subgroup and the profession mix of
+        everyone on your map instance as a colour bar."""
+        dim = color(cfg, "dim") or (0.45, 0.47, 0.5)
+        num = color(cfg, "number") or (0.86, 0.87, 0.89)
+        b = data.bridge
+        if not b:
+            self.text(cr, "needs the letterbox bridge addon in Nexus", x, y + h * 0.4, w, ssz, dim)
+            return
+        if not b.get("rtapi"):
+            self.text(cr, "install RealTime API from the Nexus library", x, y + h * 0.4, w, ssz, dim)
+            return
+        members = b.get("members", [])
+        kind = {1: "Party", 2: "Squad", 3: "Squad"}.get(b.get("group_type"), "Solo")
+        me = next((m for m in members if m.get("self")), {})
+        here = [m for m in members if m.get("here") or m.get("self")]
+        size = min(fh * 0.2, h * 0.28)
+        big = f"{kind} {b.get('group_count') or len(members)}" if kind != "Solo" else "Solo"
+        end = self.text(cr, big, x, y + size, w * 0.5, size, num)
+        cmd = next((m for m in members if m.get("commander")), None)
+        if cmd:
+            self.text(cr, f"tag {cmd.get('name') or cmd.get('account')}", end + size * 0.4, y + size, x + w - end
+                      - size * 0.4, ssz * 1.1, (0.4, 0.75, 1.0))
+        sub = []
+        if kind == "Squad" and me.get("sub"):
+            sub.append(f"subgroup {me['sub']}")
+        if members:
+            sub.append(f"{len(here)} on your map")
+        self.text(cr, " · ".join(sub) or "not in a group", x, y + size + ssz * 1.5, w, ssz, dim)
+        if not here:
+            return
+        # profession mix, one segment per profession, as wide as its share
+        counts = {}
+        for m in here:
+            counts[m.get("prof", 0)] = counts.get(m.get("prof", 0), 0) + 1
+        by, bh, bx = y + size + ssz * 2.3, min(h * 0.24, fh * 0.2), x
+        for prof in sorted(counts, key=lambda p: -counts[p]):
+            name, col = PROFESSIONS.get(prof, ("?", (0.4, 0.4, 0.4)))
+            sw = w * counts[prof] / len(here)
+            cr.set_source_rgb(*col)
+            cr.rectangle(bx, by, max(1, sw - 2), bh)
+            cr.fill()
+            label = f"{counts[prof]} {name[:3]}"
+            if sw > ssz * 3.2:
+                self.text(cr, label, bx + 4, by + bh * 0.68, sw - 8, min(bh * 0.6, ssz * 1.1), (0.06, 0.06, 0.06))
+            bx += sw
+        # your subgroup's professions
+        if kind == "Squad" and me.get("sub"):
+            mates = [PROFESSIONS.get(m.get("prof", 0), ("?", 0))[0] for m in members if m.get("sub") == me["sub"]]
+            self.text(cr, "your subgroup: " + ", ".join(sorted(mates)), x, by + bh + ssz * 1.4, w, ssz, dim)
 
     def wvw_tile(self, cr, x, y, w, h, fh, ssz, cfg, data):
         """Teams by victory points: name, bar of the current skirmish's score, VP. Yours is marked."""

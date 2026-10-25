@@ -9,6 +9,7 @@
 #   letterbox start|stop    place GW2 and start the bar, or undo it (run does this, gamemode can too)
 #   letterbox doctor        what letterbox found on this machine and what's missing
 #   letterbox setup-launch  put "letterbox run" into GW2's Steam launch options (Steam closed)
+#   letterbox setup-bridge  put the Nexus bridge addon into GW2's addons folder
 # Options (height, position, tiles, ...) live in ~/.config/letterbox/config.json, edited by the settings
 # app (settings.py). The file ~/.config/letterbox/enabled only says "mode on".
 # Letterbox and fullscreen keep separate GW2 graphics settings (GFXSettings...xml.letterbox/.fullscreen).
@@ -126,6 +127,7 @@ status)
 gfx-path) echo "$GFX" ;;
 doctor) exec python3 "$DIR/setup.py" doctor ;;
 setup-launch) exec python3 "$DIR/setup.py" launch add ;;
+setup-bridge) exec python3 "$DIR/setup.py" bridge ;;
 run)
     shift
     # MangoHud logs the frames for the FPS tiles (setup.py mangohud configured it)

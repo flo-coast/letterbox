@@ -31,6 +31,7 @@ I won't bore you with why I built this. If you're curious, there's a [section at
 | Event timer | world bosses and metas as a timeline like the one on the wiki |
 | WvW matchup | the three teams by victory points, the current skirmish's score, time left and points per tick |
 | WvW map | who holds what on the map you're on and the latest captures |
+| Squad | squad or party size, the commander, your subgroup and everyone's professions as a colour bar (needs Nexus, see below) |
 | Fans, Memory, Network | the rest |
 
 Every number tile can show the number, a graph of the last 30 s to 5 min, or both, in a colour of your
@@ -53,6 +54,18 @@ The WvW tiles get the matchup from the GW2 API every 30 seconds while they're sh
 the game itself once you've been in WvW, or right away if you add an API key in the settings (made at
 [account.arena.net/applications](https://account.arena.net/applications), the "account" permission is
 enough).
+
+### Squad tile and the Nexus bridge
+
+The game doesn't tell outside programs who's in your squad. Addons in [Nexus](https://raidcore.gg/nexus) do
+get that through Raidcore's RealTime API. So letterbox comes with a tiny Nexus addon, `letterbox bridge`,
+that writes your squad and a few game states to a file in its addon folder once per second. Under Proton
+the game folder is a normal folder on Linux, so the bar just reads it. Nothing gets sent anywhere and
+nothing in the game is automated.
+
+The installer puts the addon in place if you use Nexus (or run `letterbox setup-bridge`). In the game, load
+"letterbox bridge" in Nexus and install "RealTime API" from the Nexus library. The source is in
+[`nexus-bridge/`](nexus-bridge), built with MinGW (`nexus-bridge/build.sh`).
 
 ### More
 
@@ -135,6 +148,7 @@ letterbox run <cmd>     for the Steam launch options (the installer puts it ther
 letterbox start|stop    what run does around the game, if you want to hook it up elsewhere (gamemode)
 letterbox doctor        what letterbox found and what's missing
 letterbox setup-launch  add letterbox run to GW2's Steam launch options (Steam closed)
+letterbox setup-bridge  put the Nexus bridge addon into GW2's addons folder
 ```
 
 ## Uninstall
@@ -168,6 +182,7 @@ Power management on that Mac is its own story, see [t2-cruise](https://github.co
 
 Written by **flo-coast** (2026), with Claude (Anthropic) as a coding assistant.
 Event timer data from the GW2 wiki via [giovazz89/gw2-api-event-timers](https://github.com/giovazz89/gw2-api-event-timers).
+The bridge uses the Nexus and RealTime API headers by [Raidcore](https://raidcore.gg) (MIT).
 Not affiliated with ArenaNet or NCSOFT. Guild Wars 2 is a trademark of ArenaNet, LLC.
 
 ## License

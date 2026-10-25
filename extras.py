@@ -525,3 +525,39 @@ def draw_vault(d):
             if cur < need:
                 rows.append([("t", f"   {short(o.get('title', ''), 50)}  ", d.p["dim"]), ("t", f"{cur}/{need}", None, nf)])
     d.lines(rows)
+
+
+# ---------- character birthdays ----------
+def fetch_chars(ex):
+    icons = load_json("gw2-professions.json", {})
+    if not icons:
+        icons = {p["id"]: p["icon"] for p in api("professions?ids=all")}
+        save_json("gw2-professions.json", icons)
+    return {"chars": api("characters?ids=all", ex.key), "icons": icons}
+
+
+@tile("birthdays", "Birthdays")
+def draw_birthdays(d):
+    if d.need_key():
+        return
+    pl = d.ex.poll("chars", fetch_chars, 3600)
+    if d.waiting(pl):
+        return
+    today, nxt = date.today(), []
+    for c in pl.value["chars"]:
+        made = datetime.fromisoformat(c["created"].replace("Z", "+00:00")).astimezone().date()
+        try:
+            bday = made.replace(year=today.year)
+        except ValueError:                                # born on 29 February
+            bday = date(today.year, 3, 1)
+        if bday < today:
+            bday = bday.replace(year=today.year + 1)
+        if bday.year - made.year > 0:
+            nxt.append(((bday - today).days, c["name"], bday.year - made.year, c.get("profession")))
+    rows = []
+    for days, name, years, prof in sorted(nxt):
+        when = "today!" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
+        col = d.GOLD if days <= 1 else None
+        rows.append([("i", ICONS.get(pl.value["icons"].get(prof))), ("t", f" {name}  ", col),
+                     ("t", f"turns {years} {when}", col or d.p["dim"])])
+    d.lines(rows) if rows else d.msg("no birthdays coming up")

@@ -51,12 +51,25 @@ function place(w) {
 function manage(w) {
     if (!isGame(w) && !isBar(w)) return;
     place(w);
-    // Wine re-applies its own window size during startup: put it back, but give up after 50 tries
-    let tries = 0;
-    w.frameGeometryChanged.connect(() => {
+    // GW2 (Wine) resizes its window many times while it loads, GTK sets its own size once: put it back
+    // every time, but at most 10 times a second so a window that keeps fighting can't lock KWin up. Never
+    // give up for good: once it has calmed down, a timer puts it in place once more.
+    let since = 0, n = 0;
+    const later = new QTimer();
+    later.singleShot = true;
+    later.interval = 500;
+    later.timeout.connect(() => { const t = target(w); if (t && !same(w.frameGeometry, t)) place(w); });
+    const fix = () => {
         const t = target(w);
-        if (t && !same(w.frameGeometry, t) && tries++ < 50) place(w);
-    });
+        if (!t || same(w.frameGeometry, t)) return;
+        const now = Date.now();
+        if (now - since > 1000) { since = now; n = 0; }
+        if (n++ < 10) place(w);
+        else later.start();
+    };
+    w.frameGeometryChanged.connect(fix);
+    w.captionChanged.connect(fix);
+    w.fullScreenChanged.connect(fix);
 }
 
 workspace.windowAdded.connect(manage);

@@ -888,3 +888,101 @@ def draw_weather(d):
     rows.append([("t", f"rain likely from {rain[0][0]} ({rain[0][1]} %)" if rain else
                   f"no {'more ' if wet else ''}rain expected today", d.p["accent"] if rain else d.p["dim"])])
     d.lines(rows, top=top)
+
+
+# ---------- calendar (any iCal link: Google Calendar, Nextcloud, Outlook) ----------
+DEFAULTS["calendar_ics"] = ""
+SETTINGS += [dict(kind="heading", label="Calendar"),
+             dict(key="calendar_ics", kind="secret", label="iCal link",
+                  hint="Google Calendar: settings of the calendar → 'Secret address in iCal format'. Nextcloud and "
+                       "Outlook have such a link too. It's private, so it's hidden here like a password.")]
+
+
+def _ics_time(val, params):
+    val = val.strip()
+    if re.fullmatch(r"\d{8}", val):                                     # all-day
+        return datetime.strptime(val, "%Y%m%d").astimezone(), True
+    t = datetime.strptime(val.rstrip("Z")[:15], "%Y%m%dT%H%M%S")
+    if val.endswith("Z"):
+        return t.replace(tzinfo=timezone.utc).astimezone(), False
+    tz = re.search(r"TZID=([^;:]+)", params)
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            return t.replace(tzinfo=ZoneInfo(tz.group(1))).astimezone(), False
+        except Exception:
+            pass
+    return t.astimezone(), False
+
+
+def upcoming_events(text, now, n):
+    """The next n events of an iCal file: [(start, all_day, summary)]. Repeats (RRULE) daily, weekly, monthly and
+    yearly are followed (INTERVAL, COUNT, UNTIL); finer rules give the plain series."""
+    text = re.sub(r"\r?\n[ \t]", "", text)                             # unfold continued lines
+    out = []
+    for block in re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S):
+        props = {}
+        for line in block.strip().splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                name, _, params = k.partition(";")
+                props.setdefault(name.upper(), (v, params))
+        if "DTSTART" not in props or props.get("STATUS", ("",))[0].upper() == "CANCELLED":
+            continue
+        t, allday = _ics_time(*props["DTSTART"])
+        summary = props.get("SUMMARY", ("(no title)", ""))[0].replace("\\,", ",").replace("\\n", " ").replace("\\;", ";")
+        rule = dict(x.split("=", 1) for x in props.get("RRULE", ("", ""))[0].split(";") if "=" in x)
+        freq, every = rule.get("FREQ"), int(rule.get("INTERVAL", "1") or 1)
+        until = _ics_time(rule["UNTIL"], "")[0] if "UNTIL" in rule else None
+        count, i = int(rule.get("COUNT", "0") or 0), 1
+        while freq in ("DAILY", "WEEKLY", "MONTHLY", "YEARLY") and t < now - timedelta(hours=1) and i < 5000:
+            if count and i >= count:
+                break
+            if freq in ("DAILY", "WEEKLY"):
+                t += timedelta(days=every * (7 if freq == "WEEKLY" else 1))
+            else:
+                m = t.month - 1 + (every if freq == "MONTHLY" else 12 * every)
+                try:
+                    t = t.replace(year=t.year + m // 12, month=m % 12 + 1)
+                except ValueError:                                     # 31st in a short month: skip it
+                    pass
+            i += 1
+        if until and t > until:
+            continue
+        if t >= now - timedelta(hours=1) or (allday and t.date() == now.date()):
+            out.append((t, allday, summary))
+    return sorted(out)[:n]
+
+
+def fetch_calendar(ex):
+    url = ex.cfg.get("calendar_ics", "").strip().replace("webcal://", "https://")
+    req = urllib.request.Request(url, headers={"User-Agent": "letterbox"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return upcoming_events(r.read().decode("utf-8", "replace"), datetime.now().astimezone(), 6)
+
+
+@tile("calendar", "Calendar", group="net")
+def draw_calendar(d):
+    if not d.cfg.get("calendar_ics", "").strip():
+        d.msg("add your calendar's iCal link in the settings (Extras)")
+        return
+    pl = d.ex.poll("calendar", fetch_calendar, 600)
+    if d.waiting(pl):
+        return
+    if not pl.value:
+        d.msg("nothing coming up")
+        return
+    now, rows = datetime.now().astimezone(), []
+    for t, allday, summary in pl.value:
+        if allday:
+            when = "today" if t.date() == now.date() else "tomorrow" if t.date() == now.date() + timedelta(1) \
+                else t.strftime("%a %d.%m.")
+        elif t.date() == now.date():
+            mins = (t - now).total_seconds() / 60
+            when = f"{t:%H:%M}" + (f" (in {int(mins) + 1} min)" if 0 < mins < 120 else "")
+        else:
+            when = t.strftime("%a %H:%M")
+        soon = not allday and 0 < (t - now).total_seconds() < 900
+        rows.append([("t", f"{when}  ", d.ORANGE if soon else d.p["accent"]),
+                     ("t", short(summary, 70), None if soon else d.p["num"])])
+    d.lines(rows, size=max(12, d.ssz * 1.25))

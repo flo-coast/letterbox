@@ -123,20 +123,15 @@ Then start GW2 through Steam as usual.
 Letterbox mode keeps its own copy of GW2's graphics settings. `letterbox off` brings back the fullscreen
 ones, so switching back and forth doesn't mess up either.
 
-### Settings that aren't in the app
+### System settings
 
-In `~/.config/letterbox/config.json`
+Everything the installer finds on its own is in the settings app under **System**. There you can pick the
+monitor and the GPU from a list, point letterbox to GW2's graphics settings, game folder or MangoHud logs if
+they live somewhere unusual, enter the API key and run the same check as `letterbox doctor`. The GW2 logger
+picks up the GPU you choose there too.
 
-| Key | Default | For |
-|---|---|---|
-| `output` | primary monitor | the monitor GW2 goes on, e.g. `"DP-1"` |
-| `height` | 2.13 : 1 of the monitor | game height in px, also in the settings app |
-| `gpu` | first discrete AMD GPU | PCI address of the GPU to show, e.g. `"0000:03:00.0"` |
-| `gfx_settings` | found automatically | path to `GFXSettings.Gw2-64.exe.xml` if it isn't |
-| `mangohud_dir` | `~/.local/share/letterbox/mangohud` | where MangoHud writes GW2's logs |
-
-The logger runs as root and doesn't see your config. If it picks the wrong GPU, set `LETTERBOX_GPU` in
-`/etc/systemd/system/letterbox-gw2log.service`.
+For reference, these end up in `~/.config/letterbox/config.json` as `output`, `gpu`, `gfx_settings`,
+`game_dir`, `mangohud_dir` and `api_key`. An empty value means automatic.
 
 ## Commands
 

@@ -55,7 +55,8 @@ DEFAULTS = {
     "gpu": "",                             # PCI address of the GPU to show (e.g. "0000:03:00.0"); empty = auto
     "mangohud_dir": "~/.local/share/letterbox/mangohud",   # MangoHud output_folder (FPS tiles)
     "api_key": "",                         # GW2 API key ("account" permission): finds your WvW team
-    "bridge_file": "",                     # bridge.json of the Nexus addon; empty = GW2 in a Steam library
+    "game_dir": "",                        # GW2's folder (Gw2-64.exe), for the Nexus bridge; empty = Steam library
+    "bridge_file": "",                     # bridge.json of the Nexus addon; empty = in game_dir
     "graph_seconds": 60,
     "theme": "classic", "colors": {},         # colors: overrides per group/role or per tile key
     "background": "black",                 # black | ambient
@@ -104,28 +105,32 @@ def default_height(w, h):
     return min(w * 15 // 32, h * 9 // 10) // 2 * 2
 
 
-def screen(cfg=None):
-    """The monitor GW2 goes on: the configured output, else the primary one (KDE "priority 1").
-    -> dict(name, w, h (mode in device pixels), x, y (logical position), scale) or None."""
-    cfg = cfg if cfg is not None else load_config()
+def outputs():
+    """Enabled monitors, primary (KDE "priority 1") first: [dict(name, w, h (mode in device pixels),
+    x, y (logical position), scale, primary)]."""
     try:
         outs = json.loads(subprocess.run(["kscreen-doctor", "-j"], capture_output=True, text=True,
                                          timeout=5).stdout)["outputs"]
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        return None
-    outs = [o for o in outs if o.get("enabled")]
-    pick = ([o for o in outs if o["name"] == cfg.get("output")] or
-            sorted(outs, key=lambda o: o.get("priority") or 99))
-    if not pick:
-        return None
-    o = pick[0]
-    mode = next((m for m in o.get("modes", []) if m["id"] == o.get("currentModeId")), None)
-    if not mode:
-        return None
-    w, h = mode["size"]["width"], mode["size"]["height"]
-    if o.get("rotation") in (2, 8):                        # portrait
-        w, h = h, w
-    return dict(name=o["name"], w=w, h=h, x=o["pos"]["x"], y=o["pos"]["y"], scale=o.get("scale") or 1)
+        return []
+    res = []
+    for o in sorted((o for o in outs if o.get("enabled")), key=lambda o: o.get("priority") or 99):
+        mode = next((m for m in o.get("modes", []) if m["id"] == o.get("currentModeId")), None)
+        if not mode:
+            continue
+        w, h = mode["size"]["width"], mode["size"]["height"]
+        if o.get("rotation") in (2, 8):                    # portrait
+            w, h = h, w
+        res.append(dict(name=o["name"], w=w, h=h, x=o["pos"]["x"], y=o["pos"]["y"], scale=o.get("scale") or 1,
+                        primary=o.get("priority") == 1))
+    return res
+
+
+def screen(cfg=None):
+    """The monitor GW2 goes on: the configured output, else the primary one. -> dict (see outputs) or None."""
+    cfg = cfg if cfg is not None else load_config()
+    outs = outputs()
+    return next((o for o in outs if o["name"] == cfg.get("output")), outs[0] if outs else None)
 
 
 def rgb(hexstr):
@@ -374,6 +379,8 @@ def steam_libraries():
 def bridge_path(cfg):
     if cfg.get("bridge_file"):
         return os.path.expanduser(cfg["bridge_file"])
+    if cfg.get("game_dir"):
+        return os.path.join(os.path.expanduser(cfg["game_dir"]), "addons", "letterbox", "bridge.json")
     for lib in steam_libraries():
         p = f"{lib}/steamapps/common/Guild Wars 2/addons/letterbox/bridge.json"
         if os.path.isdir(os.path.dirname(os.path.dirname(p))):
@@ -962,7 +969,7 @@ class Renderer:
         num = color(cfg, "number") or (0.86, 0.87, 0.89)
         b = data.bridge
         if not b:
-            known = data.bridge_file and os.path.exists(data.bridge_file)
+            known = data.bridge_file and os.path.isdir(os.path.dirname(data.bridge_file))   # made by the addon
             self.text(cr, "waiting for GW2" if known else "needs the letterbox bridge addon in Nexus", x,
                       y + h * 0.4, w, ssz, dim)
             return

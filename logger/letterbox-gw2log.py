@@ -25,11 +25,25 @@ CLK_TCK = os.sysconf("SC_CLK_TCK")
 RAPL = next(iter(sorted(glob.glob("/sys/class/powercap/intel-rapl:[0-9]/energy_uj"))), None)
 
 
+def configured_gpu():
+    """The GPU picked in the letterbox settings ("gpu" in a user's config; this runs as root and can read
+    it), or LETTERBOX_GPU from the service."""
+    if os.environ.get("LETTERBOX_GPU"):
+        return os.environ["LETTERBOX_GPU"]
+    for p in sorted(glob.glob("/home/*/.config/letterbox/config.json")):
+        try:
+            g = json.load(open(p)).get("gpu")
+        except (OSError, ValueError):
+            continue
+        if g:
+            return g
+    return ""
+
+
 def gpu_busy_file():
-    """gpu_busy_percent of the GPU the bar shows: "gpu" (PCI address) in the users' letterbox configs is
-    not readable here in general, so: LETTERBOX_GPU from the service, else the first amdgpu that is not
+    """gpu_busy_percent of the GPU the bar shows: the configured one, else the first amdgpu that is not
     the boot display (a discrete card next to an iGPU), else any."""
-    want = os.environ.get("LETTERBOX_GPU", "")
+    want = configured_gpu()
     cards = []
     for p in sorted(glob.glob("/sys/class/drm/card[0-9]*/device/gpu_busy_percent")):
         real = os.path.realpath(os.path.dirname(p))

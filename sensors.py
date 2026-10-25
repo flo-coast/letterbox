@@ -6,7 +6,7 @@
 #              (runs as root) supplies it
 #   GPU:       amdgpu hwmon of the chosen card: power, power cap, shader/memory clock, edge/junction temp
 #   Fans:      hwmon fan inputs (laptop/board/Apple SMC first, then the GPU's)
-import glob, os, time
+import glob, os, re, subprocess, time
 
 
 def gpu_device(pci=""):
@@ -27,6 +27,26 @@ def gpu_device(pci=""):
         cards.append((boot, dev))
     cards.sort()
     return cards[0][1] if cards else None
+
+
+def gpu_list():
+    """All AMD GPUs the bar can show: [(PCI address, sysfs device dir, readable name)]."""
+    out = []
+    for p in sorted(glob.glob("/sys/class/drm/card[0-9]*/device/gpu_busy_percent")):
+        dev = os.path.dirname(p)
+        pci = os.path.basename(os.path.realpath(dev))
+        out.append((pci, dev, gpu_name(pci)))
+    return out
+
+
+def gpu_name(pci):
+    """'AMD Navi 14 [Radeon RX 5500/5500M / Pro 5300/5300M/5500M]' from lspci, else the PCI address."""
+    try:
+        out = subprocess.run(["lspci", "-s", pci], capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return pci
+    out = re.sub(r"^\S+\s+[^:]+:\s*", "", out).replace("Advanced Micro Devices, Inc. [AMD/ATI]", "AMD")
+    return re.sub(r"\s*\(rev \w+\)$", "", out) or pci
 
 
 def _read(path, scale=1.0):

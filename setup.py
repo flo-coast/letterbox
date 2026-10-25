@@ -237,11 +237,14 @@ BRIDGE_URL = "https://github.com/flo-coast/letterbox/releases/latest/download/le
 def game_dir():
     sys.path.insert(0, DIR)
     import bar
+    cfg = bar.load_config()
+    if cfg.get("game_dir"):
+        return os.path.expanduser(cfg["game_dir"])
     for lib in bar.steam_libraries():
         d = f"{lib}/steamapps/common/Guild Wars 2"
         if os.path.exists(f"{d}/Gw2-64.exe"):
             return d
-    p = bar.load_config().get("bridge_file")
+    p = cfg.get("bridge_file")
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.expanduser(p)))) if p else None
 
 
@@ -302,7 +305,7 @@ def doctor():
     line(bool(sc), "Monitor", f"{sc['name']} {sc['w']}x{sc['h']}, game {sc['w']}x{cfg['height']}" if sc else
          "can't read the monitor setup (kscreen-doctor)")
     s = bar.sensors.Sensors(cfg.get("gpu", ""))
-    gname = gpu_name(s.gpu) if s.gpu else None
+    gname = bar.sensors.gpu_name(os.path.basename(os.path.realpath(s.gpu))) if s.gpu else None
     line(True if s.gpu else None, "GPU", gname or "no AMD GPU found: the GPU tiles are hidden")
     line(True if s.cpu_hw else None, "CPU sensors",
          f"{s.cpu_hw[0]}" + (", power via RAPL" if s.rapl else ", power via the GW2 logger")
@@ -340,16 +343,6 @@ def doctor():
     line(True if bar.HAS_PROBE else None, "Apple SMC tiles", "t2pm probe found" if bar.HAS_PROBE else
          "no t2pm probe (only on T2 MacBooks)")
     return 0 if ok else 1
-
-
-def gpu_name(dev):
-    try:
-        pci = os.path.basename(os.path.realpath(dev))
-        out = subprocess.run(["lspci", "-s", pci], capture_output=True, text=True).stdout.strip()
-        out = re.sub(r"^\S+\s+[^:]+:\s*", "", out).replace("Advanced Micro Devices, Inc. [AMD/ATI]", "AMD")
-        return re.sub(r"\s*\(rev \w+\)$", "", out) or pci
-    except OSError:
-        return os.path.basename(os.path.realpath(dev))
 
 
 def launch_options():

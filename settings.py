@@ -27,17 +27,24 @@ TEXT_COLORS = [("number", "Numbers"), ("dim", "Small text"), ("bg", "Background"
 _spec = importlib.util.spec_from_file_location("letterbox_bar", os.path.join(DIR, "bar.py"))
 gb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gb)
-_scr = gb.screen() or dict(name="?", w=3840, h=2160)
-OUT_W, OUT_H = _scr["w"], _scr["h"]                  # the monitor GW2 goes on, in device pixels
+OUT_W = OUT_H = 0                                    # the monitor GW2 goes on, in device pixels
+PRESETS = []
 
 
-def _preset(label, ratio):
-    h = int(OUT_W / ratio) // 2 * 2
-    return (f"{label}  ({OUT_W}×{h})", h)
+def screen_setup():
+    """Monitor size and the game size presets for it (again after the monitor was changed)."""
+    global OUT_W, OUT_H, PRESETS
+    scr = gb.screen() or dict(name="?", w=3840, h=2160)
+    OUT_W, OUT_H = scr["w"], scr["h"]
+
+    def preset(label, ratio):
+        h = int(OUT_W / ratio) // 2 * 2
+        return (f"{label}  ({OUT_W}×{h})", h)
+    PRESETS = [p for p in (preset("2.13 : 1", 2.133), preset("21 : 9", 21 / 9), preset("2.4 : 1", 2.4),
+                           preset("2 : 1", 2.0)) if OUT_H // 2 <= p[1] < OUT_H] + [("custom", None)]
 
 
-PRESETS = [p for p in (_preset("2.13 : 1", 2.133), _preset("21 : 9", 21 / 9), _preset("2.4 : 1", 2.4),
-                       _preset("2 : 1", 2.0)) if OUT_H // 2 <= p[1] < OUT_H] + [("custom", None)]
+screen_setup()
 
 
 def list_profiles():
@@ -97,6 +104,7 @@ def keep_scroll(sc, rebuild):
 
 def dropdown(items, current, on_change):
     dd = Gtk.DropDown.new_from_strings([n for _, n in items])
+    dd.set_halign(Gtk.Align.START)             # as wide as its longest entry, not the whole column
     keys = [k for k, _ in items]
     dd.set_selected(keys.index(current) if current in keys else 0)
     dd.connect("notify::selected", lambda d, _p: on_change(keys[d.get_selected()]))
@@ -128,7 +136,7 @@ class Settings(Gtk.ApplicationWindow):
         outer.append(self.area)
 
         outer.append(self.profile_row())
-        nb = Gtk.Notebook(vexpand=True)
+        nb = self.nb = Gtk.Notebook(vexpand=True)
         nb.add_css_class("letterbox-tabs")
         css = Gtk.CssProvider()                   # divider lines between the tab headers
         css.load_from_string(".letterbox-tabs > header > tabs > tab { padding: 6px 18px; "
@@ -142,6 +150,7 @@ class Settings(Gtk.ApplicationWindow):
         nb.append_page(self.page_clock(), Gtk.Label(label="Clock"))
         nb.append_page(self.page_events(), Gtk.Label(label="Events"))
         nb.append_page(self.page_behaviour(), Gtk.Label(label="Behaviour & hotkeys"))
+        nb.append_page(self.page_system(), Gtk.Label(label="System"))
 
         bb = Gtk.Box(spacing=10, halign=Gtk.Align.END)
         self.test = Gtk.ToggleButton(label="Show bar on screen")
@@ -159,8 +168,9 @@ class Settings(Gtk.ApplicationWindow):
         box = Gtk.Box(spacing=8)
         box.append(Gtk.Label(label="<b>Profile</b>", use_markup=True))
         self.prof_dd = Gtk.DropDown.new_from_strings(list_profiles() or ["(none saved)"])
-        self.prof_dd.set_hexpand(True)
+        self.prof_dd.set_halign(Gtk.Align.START)
         box.append(self.prof_dd)
+        box.append(Gtk.Box(hexpand=True))          # buttons stay on the right
         for label, cb in (("Load", self.on_load), ("Delete", self.on_delete)):
             b = Gtk.Button(label=label)
             b.connect("clicked", cb)
@@ -231,10 +241,16 @@ class Settings(Gtk.ApplicationWindow):
             json.dump(prof, dst, indent=1)
         if self.test.get_active():
             self.stop_test()
-        app = self.get_application()               # rebuild the window from the loaded config
+        self.rebuild(f"Loaded profile '{name}'. Game size and position apply at the next GW2 start.", name)
+
+    def rebuild(self, status, profile=None, page=None):
+        """New window from the saved config (after loading a profile or changing the monitor)."""
+        app = self.get_application()
         win = Settings(app)
-        win.refresh_profiles(name)
-        win.update_status(f"Loaded profile '{name}'. Game size and position apply at the next GW2 start.")
+        win.refresh_profiles(profile or self.c.get("profile"))
+        win.update_status(status)
+        if page is not None:
+            win.nb.set_current_page(page)
         win.present()
         Gio.bus_get_sync(Gio.BusType.SESSION).call("letterbox.bar", "/letterbox/bar", "letterbox.Bar", "Reload", None,
                                                     None, Gio.DBusCallFlags.NONE, 500, None, None)
@@ -721,16 +737,125 @@ class Settings(Gtk.ApplicationWindow):
             "  Meta+Shift+M   lag marker: notes the time (sound + red flash) in\n"
             "                 ~/.local/share/letterbox/markers.log, to find laggy moments in your logs later\n"
             "Change them in System Settings → Shortcuts (search 'letterbox')."), xalign=0, wrap=True), 0, 2, 3, 1)
-        g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 3, 3, 1)
+        return sc
+
+    def page_system(self):
+        """Things the installer finds on its own, to check or change: monitor, GPU, paths, API key."""
+        sc, g = self.grid()
+        outs = gb.outputs()
+        prim = outs[0]["name"] if outs else "?"
+        items = [("", f"Primary monitor ({prim})")] + [(o["name"], f"{o['name']}  {o['w']}×{o['h']}"
+                                                         + ("  (primary)" if o["primary"] else "")) for o in outs]
+        self.row(g, 0, "Monitor for GW2", dropdown(items, self.c.get("output", ""), self.on_output))
+        gpus = gb.sensors.gpu_list()
+        auto = gb.sensors.gpu_device("")
+        auto_name = next((n for _p, d, n in gpus if d == auto), "none found")
+        items = [("", f"Automatic ({auto_name})")] + [(pci, f"{name}  ({pci})") for pci, _d, name in gpus]
+        self.row(g, 1, "GPU", dropdown(items, self.c.get("gpu", ""), self.on_gpu),
+                 None if gpus else Gtk.Label(label="no AMD GPU: GPU tiles are hidden", css_classes=["dim-label"]))
+        g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 2, 3, 1)
+        self.path_row(g, 3, "GW2 graphics settings", "gfx_settings", self.auto_gfx, folder=False,
+                      hint="GFXSettings.Gw2-64.exe.xml, letterbox switches GW2 between windowed and fullscreen in it")
+        self.path_row(g, 5, "GW2 game folder", "game_dir", self.auto_game, folder=True,
+                      hint="the folder with Gw2-64.exe, for the Nexus bridge (squad tile)")
+        self.path_row(g, 7, "MangoHud log folder", "mangohud_dir", None, folder=True,
+                      hint="MangoHud's output_folder, for the FPS tiles")
+        g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 9, 3, 1)
         key = Gtk.PasswordEntry(show_peek_icon=True, hexpand=True, text=self.c.get("api_key", ""))
         key.connect("changed", lambda w: self.set("api_key", w.get_text().strip()))
-        self.row(g, 4, "GW2 API key", key)
+        self.row(g, 10, "GW2 API key", key)
         g.attach(Gtk.Label(label=(
             "Needed for the WvW tiles, the game doesn't tell outside programs which matchup you're in. Make one "
             "at account.arena.net/applications, the 'account' permission is enough. It stays in "
             "~/.config/letterbox/config.json, readable only by you."),
-            xalign=0, wrap=True, css_classes=["dim-label"]), 1, 5, 2, 1)
+            xalign=0, wrap=True, css_classes=["dim-label"]), 1, 11, 2, 1)
+        g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 12, 3, 1)
+        check = Gtk.Button(label="Check setup", halign=Gtk.Align.START)
+        self.doctor_out = Gtk.Label(xalign=0, selectable=True, css_classes=["monospace"], wrap=True)
+        check.connect("clicked", self.on_check)
+        self.row(g, 13, "", check)
+        g.attach(self.doctor_out, 0, 14, 3, 1)
         return sc
+
+    def path_row(self, g, r, label, key, auto_fn, folder, hint):
+        """Path with what's in use, 'Choose…' and (with auto_fn) 'Automatic'."""
+        cur = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.MIDDLE, selectable=True)
+
+        def show():
+            val = os.path.expanduser(self.c.get(key) or "")
+            if val:
+                cur.set_text(val + ("" if os.path.exists(val) else "   (doesn't exist)"))
+            else:
+                a = auto_fn() if auto_fn else None
+                cur.set_text(f"automatic: {a}" if a else "automatic: not found")
+            cur.set_tooltip_text(cur.get_text())
+
+        def chosen(dlg, res):
+            try:
+                f = dlg.select_folder_finish(res) if folder else dlg.open_finish(res)
+            except GLib.Error:
+                return                                     # cancelled
+            self.set(key, f.get_path())
+            if key in ("mangohud_dir", "game_dir"):        # the preview reads them
+                self.data = gb.Data(self.c.get("graph_seconds", 60), self.c)
+            show()
+
+        def choose(_b):
+            dlg = Gtk.FileDialog(title=label, modal=True)
+            start = os.path.expanduser(self.c.get(key) or (auto_fn() if auto_fn else "") or "~")
+            if os.path.exists(start):
+                gf = Gio.File.new_for_path(start if folder or os.path.isdir(start) else os.path.dirname(start))
+                dlg.set_initial_folder(gf)
+            (dlg.select_folder if folder else dlg.open)(self, None, chosen)
+
+        def automatic(_b):
+            self.set(key, "")
+            if key == "game_dir":
+                self.data = gb.Data(self.c.get("graph_seconds", 60), self.c)
+            show()
+        box = Gtk.Box(spacing=6)
+        b = Gtk.Button(label="Choose…")
+        b.connect("clicked", choose)
+        box.append(b)
+        if auto_fn:
+            a = Gtk.Button(label="Automatic", css_classes=["flat"])
+            a.connect("clicked", automatic)
+            box.append(a)
+        self.row(g, r, label, cur, box)
+        g.attach(Gtk.Label(label=hint, xalign=0, css_classes=["dim-label"]), 1, r + 1, 2, 1)
+        show()
+
+    def auto_gfx(self):
+        try:
+            env = dict(os.environ, LETTERBOX_IGNORE_GFX_CONF="1")
+            return subprocess.run([SH, "gfx-path"], capture_output=True, text=True, timeout=5, env=env).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def auto_game(self):
+        p = gb.bridge_path(dict(self.c, bridge_file="", game_dir=""))
+        return os.path.dirname(os.path.dirname(os.path.dirname(p))) if p else None
+
+    def on_output(self, name):
+        self.set("output", name)
+        sc = gb.screen(self.c)
+        if sc and not (sc["h"] // 2 <= self.c.get("height", 0) < sc["h"]):
+            self.set("height", gb.default_height(sc["w"], sc["h"]))   # the old game size doesn't fit
+        screen_setup()
+        self.rebuild(f"GW2 goes on {sc['name'] if sc else name} from the next start.", page=self.nb.get_current_page())
+
+    def on_gpu(self, pci):
+        self.set("gpu", pci)
+        self.data = gb.Data(self.c.get("graph_seconds", 60), self.c)
+        self.update_status("GPU changed. The GW2 logger picks it up at its next start (or reboot).")
+
+    def on_check(self, _b):
+        try:
+            out = subprocess.run([sys.executable, os.path.join(DIR, "setup.py"), "doctor"], capture_output=True,
+                                 text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError) as ex:
+            out = str(ex)
+        self.doctor_out.set_text(out.strip())
 
     # ---------- tiles ----------
     def fill_tiles(self):

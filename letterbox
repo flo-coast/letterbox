@@ -42,7 +42,7 @@ json.dump(c, open(sys.argv[1],"w"), indent=1)' "$CONF" "$1"
 # GW2's graphics settings: "gfx_settings" in the config, else the Steam version's file in any Steam library
 gfx_file() {
     local f lib
-    f=$(conf gfx_settings "")
+    [ -n "${LETTERBOX_IGNORE_GFX_CONF:-}" ] && f="" || f=$(conf gfx_settings "")   # settings app: what's automatic
     if [ -n "$f" ]; then echo "${f/#\~/$HOME}"; return; fi
     for lib in ~/.local/share/Steam ~/.steam/steam ~/.var/app/com.valvesoftware.Steam/.local/share/Steam \
                $(grep -ho '"path"[[:space:]]*"[^"]*"' ~/.local/share/Steam/steamapps/libraryfolders.vdf \

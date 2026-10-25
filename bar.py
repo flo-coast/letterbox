@@ -22,6 +22,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import extras
 import gw2events
 import sensors
 
@@ -81,6 +82,7 @@ DEFAULTS = {
     "combat": "dim",                       # off | dim | warnings: what happens to the tiles in combat
     "warnings_only": False,
 }
+DEFAULTS.update(extras.DEFAULTS)
 
 
 def load_config():
@@ -410,6 +412,7 @@ class Data:
         self.wvw = WvW()
         self.bridge_file = bridge_path(cfg)
         self.bridge = None                    # latest bridge.json of the Nexus addon, or None
+        self.extras = extras.Extras(cfg)
         self.hist = {}
         self.graph_seconds = graph_seconds
         self.probe = self.mumble = None
@@ -592,6 +595,8 @@ TILES = {
     "mem": ("Memory", "GiB", 32, "mem", "num"),
     "net": ("Network down", "KiB/s", 2000, "net", "num"),
 }
+for _k, _t in extras.TILES.items():  # the extra tiles (extras.py)
+    TILES[_k] = (_t["title"], "", 0, _t["group"], "x")
 if not HAS_PROBE:                    # Apple SMC tiles only with the t2pm probe (T2 MacBooks)
     del TILES["budget"], TILES["smc"]
 if not sensors.gpu_device(load_config().get("gpu", "")):    # GPU tiles need an AMD GPU (amdgpu sysfs)
@@ -704,6 +709,7 @@ NO_ALERT = {"Day and night", "Cantha: Day and night"}       # cycles, not events
 class Renderer:
     def __init__(self):
         self.flash_until = 0
+        self.hits = []
         self.alerted = set()                  # events the sound was played for
 
     def alert(self, cfg, data):
@@ -729,7 +735,12 @@ class Renderer:
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return best
 
+    def hit(self, px, py):
+        """Clickable tile under the pointer, or None."""
+        return next((k for k, x, y, w, h in self.hits if x <= px < x + w and y <= py < y + h), None)
+
     def draw(self, cr, w, h, cfg, data, mode, ambient_cols=None):
+        self.hits = []                        # clickable tiles of this frame: (key, x, y, w, h)
         self.f_text = cfg.get("font_text") or "sans"
         self.f_num = cfg.get("font_number") or "monospace"
         cr.set_source_rgb(*(color(cfg, "bg") or (0, 0, 0)))
@@ -912,6 +923,15 @@ class Renderer:
             self.event_tile(cr, x, y + fh * 0.16, w, h - fh * 0.16, cfg, data, 1)
             return
         if data is None:
+            return
+        if kind == "x":                       # extras.py
+            data.extras.cfg = cfg
+            if extras.TILES[key]["click"]:
+                self.hits.append((key, x, y, w, h))
+            pal = dict(dim=color(cfg, "dim") or (0.45, 0.47, 0.5), num=color(cfg, "number") or (0.86, 0.87, 0.89),
+                       accent=col)
+            extras.TILES[key]["draw"](extras.Draw(self, cr, x, y + fh * 0.16, w, h - fh * 0.16, fh, ssz, cfg, data,
+                                                  pal))
             return
         if kind == "squad":
             self.squad_tile(cr, x, y + fh * 0.16, w, h - fh * 0.16, fh, ssz, cfg, data)
@@ -1352,9 +1372,12 @@ class Bar(Gtk.ApplicationWindow):
         self.amb_cols = None
         self.last_frame = time.monotonic()
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
-        self.area.set_draw_func(lambda a, cr, w, h: self.renderer.draw(cr, w, h, self.cfg, self.data, self.mode,
-                                                                        self.amb_cols))
+        self.area.set_draw_func(self.on_draw)
         self.set_child(self.area)
+        click = Gtk.GestureClick()
+        click.connect("pressed", self.on_click)
+        self.area.add_controller(click)
+        self.scr = screen(self.cfg)
         css = Gtk.CssProvider()
         css.load_from_string("window { background: black; }")
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -1367,6 +1390,17 @@ class Bar(Gtk.ApplicationWindow):
     def tick(self):
         self.data.update()
         return True
+
+    def on_draw(self, _a, cr, w, h):
+        self.renderer.draw(cr, w, h, self.cfg, self.data, self.mode, self.amb_cols)
+        for fn in extras.AFTER_DRAW:                      # e.g. the window tile's placement
+            fn(self)
+
+    def on_click(self, _g, _n, x, y):
+        key = self.renderer.hit(x, y)
+        if key:
+            extras.TILES[key]["click"](self.data.extras, self.cfg)
+            self.area.queue_draw()
 
     def grab(self):
         if self.cfg.get("background") == "ambient" and self.mode != "off":
@@ -1387,15 +1421,18 @@ class Bar(Gtk.ApplicationWindow):
 
     def reload(self):
         self.cfg = load_config()
+        self.scr = screen(self.cfg)
+        self.data.extras.cfg = self.cfg
         self.data.graph_seconds = self.cfg.get("graph_seconds", 60)
         self.area.queue_draw()
 
 
 # D-Bus letterbox.Bar on /letterbox/bar: Cycle/Toggle (mode), Mark (lag marker: time to MARKERS, sound,
-# red flash), Flash (only the flash), Reload (config changed)
+# red flash), Flash (only the flash), Reload (config changed), Action(name) (a feature of extras.py)
 IFACE = Gio.DBusNodeInfo.new_for_xml(
     "<node><interface name='letterbox.Bar'><method name='Toggle'/><method name='Cycle'/><method name='Mark'/>"
-    "<method name='Flash'/><method name='Reload'/></interface></node>").interfaces[0]
+    "<method name='Flash'/><method name='Reload'/><method name='Action'><arg type='s' direction='in'/></method>"
+    "</interface></node>").interfaces[0]
 
 
 def mark():
@@ -1428,6 +1465,9 @@ def main():
                 bar.renderer.flash_until = time.time() + 0.8
             elif method == "Reload":
                 bar.reload()
+            elif method == "Action" and _params.unpack()[0] in extras.ACTIONS:
+                extras.ACTIONS[_params.unpack()[0]](bar.data.extras)
+                bar.area.queue_draw()
             inv.return_value(None)
         a.get_dbus_connection().register_object("/letterbox/bar", IFACE, call, None, None)
     app.connect("activate", activate)

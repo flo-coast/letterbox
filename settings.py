@@ -150,6 +150,7 @@ class Settings(Gtk.ApplicationWindow):
         nb.append_page(self.page_clock(), Gtk.Label(label="Clock"))
         nb.append_page(self.page_events(), Gtk.Label(label="Events"))
         nb.append_page(self.page_behaviour(), Gtk.Label(label="Behaviour & hotkeys"))
+        nb.append_page(self.page_extras(), Gtk.Label(label="Extras"))
         nb.append_page(self.page_system(), Gtk.Label(label="System"))
 
         bb = Gtk.Box(spacing=10, halign=Gtk.Align.END)
@@ -738,6 +739,67 @@ class Settings(Gtk.ApplicationWindow):
             "                 ~/.local/share/letterbox/markers.log, to find laggy moments in your logs later\n"
             "Change them in System Settings → Shortcuts (search 'letterbox')."), xalign=0, wrap=True), 0, 2, 3, 1)
         return sc
+
+    def page_extras(self):
+        """Settings of the extra tiles, built from what the features in extras.py ask for."""
+        sc, g = self.grid()
+        r = 0
+        g.attach(Gtk.Label(label="Add the tiles themselves under 'Tiles'.", xalign=0, css_classes=["dim-label"]),
+                 0, r, 3, 1)
+        r += 1
+        for f in gb.extras.SETTINGS:
+            if f["kind"] == "heading":
+                g.attach(Gtk.Separator(margin_top=6, margin_bottom=2), 0, r, 3, 1)
+                g.attach(Gtk.Label(label=f"<b>{GLib.markup_escape_text(f['label'])}</b>", use_markup=True, xalign=0),
+                         0, r + 1, 3, 1)
+                r += 2
+                continue
+            self.row(g, r, f["label"], self.extra_widget(f))
+            r += 1
+            if f.get("hint"):
+                g.attach(Gtk.Label(label=f["hint"], xalign=0, wrap=True, css_classes=["dim-label"]), 1, r, 2, 1)
+                r += 1
+        return sc
+
+    def get_path(self, key, default=None):
+        """Config value; "a.b" reaches into a dict."""
+        cur = self.c
+        for part in key.split("."):
+            cur = cur.get(part, None) if isinstance(cur, dict) else None
+        return default if cur is None else cur
+
+    def set_path(self, key, value):
+        parts = key.split(".")
+        cur = self.c
+        for part in parts[:-1]:
+            if not isinstance(cur.get(part), dict):
+                cur[part] = {}
+            cur = cur[part]
+        cur[parts[-1]] = value
+        self.changed()
+
+    def extra_widget(self, f):
+        key, kind = f["key"], f["kind"]
+        val = self.get_path(key, f.get("default"))
+        if kind in ("entry", "secret"):
+            w = (Gtk.PasswordEntry(show_peek_icon=True) if kind == "secret" else
+                 Gtk.Entry(placeholder_text=f.get("placeholder", "")))
+            w.set_hexpand(True)
+            w.set_text(str(val or ""))
+            w.connect("changed", lambda e: self.set_path(key, e.get_text().strip()))
+        elif kind == "spin":
+            w = Gtk.SpinButton.new_with_range(f.get("min", 0), f.get("max", 999), f.get("step", 1))
+            w.set_halign(Gtk.Align.START)
+            w.set_value(val or 0)
+            w.connect("value-changed", lambda e: self.set_path(key, int(e.get_value())))
+        elif kind == "check":
+            w = Gtk.Switch(active=bool(val), halign=Gtk.Align.START)
+            w.connect("notify::active", lambda e, _p: self.set_path(key, e.get_active()))
+        elif kind == "choice":
+            w = dropdown(f["items"], val, lambda v: self.set_path(key, v))
+        else:                                              # "custom": the feature builds its own widget
+            w = f["build"](self, f)
+        return w
 
     def page_system(self):
         """Things the installer finds on its own, to check or change: monitor, GPU, paths, API key."""

@@ -463,3 +463,39 @@ SETTINGS += [dict(kind="heading", label="Trading Post"),
                   hint="Shift+click an item in game, copy the link from the chat and paste it here. The tile shows "
                        "the sell price, the change since yesterday and turns gold below your alert price. Your "
                        "delivery box shows up there too (with the API key).")]
+
+
+# ---------- session earnings ----------
+def fetch_wallet(ex):
+    names = load_json("gw2-currencies.json", {})
+    if not names:
+        names = {str(c["id"]): {"name": c["name"], "icon": c["icon"]} for c in api("currencies?ids=all")}
+        save_json("gw2-currencies.json", names)
+    now = {str(x["id"]): x["value"] for x in api("account/wallet", ex.key)}
+    if not hasattr(ex, "wallet_start"):                    # the first look is the session's start
+        ex.wallet_start = (time.time(), now)
+    return {"now": now, "names": names}
+
+
+@tile("earnings", "Session earnings")
+def draw_earnings(d):
+    if d.need_key():
+        return
+    pl = d.ex.poll("wallet", fetch_wallet, 60)
+    if d.waiting(pl):
+        return
+    t0, start = d.ex.wallet_start
+    now, names = pl.value["now"], pl.value["names"]
+    diff = {k: now.get(k, 0) - start.get(k, 0) for k in set(now) | set(start)}
+    hours = max(1 / 60, (time.time() - t0) / 3600)
+    nf = d.r.f_num
+    gold = diff.get("1", 0)
+    top = d.big(coin_parts(gold, nf, sign=True))
+    rows = [[("t", "per hour  ", d.p["dim"])] + coin_parts(gold / hours, nf) +
+            [("t", f"   ·   for {hm(time.time() - t0)} h", d.p["dim"])]]
+    for k, val in sorted(diff.items(), key=lambda z: -abs(z[1])):
+        if k != "1" and val:
+            c = names.get(k, {})
+            rows.append([("i", ICONS.get(c.get("icon"))), ("t", f" {val:+,}  ".replace(",", " "), None, nf),
+                         ("t", c.get("name", k), d.p["dim"])])
+    d.lines(rows, top=top)

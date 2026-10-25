@@ -999,7 +999,8 @@ class Settings(Gtk.ApplicationWindow):
         self.row(g, 10, "GW2 API key", key)
         g.attach(Gtk.Label(label=(
             "Needed for the WvW tiles, the game doesn't tell outside programs which matchup you're in. Make one "
-            "at account.arena.net/applications, the 'account' permission is enough. It stays in "
+            "at account.arena.net/applications with the permissions account, wallet, characters, progression and tradingpost (WvW, the "
+            "Trading Post, earnings, Wizard's Vault, birthdays and bosses done). It stays in "
             "~/.config/letterbox/config.json, readable only by you."),
             xalign=0, wrap=True, css_classes=["dim-label"]), 1, 11, 2, 1)
         g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 12, 3, 1)

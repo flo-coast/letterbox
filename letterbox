@@ -174,5 +174,5 @@ stop)
     # frame logs in letterbox's own MangoHud folder: keep 14 days (a folder you chose yourself stays untouched)
     find ~/.local/share/letterbox/mangohud -name 'Gw2-64_*.csv' -mtime +14 -delete 2>/dev/null
     log "stopped" ;;
-*) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

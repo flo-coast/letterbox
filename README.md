@@ -68,8 +68,9 @@ choice.
 
 The WvW tiles get the matchup from the GW2 API every 30 seconds while they're shown. The game doesn't tell
 outside programs which matchup you're in, so they need an API key in the settings, made at
-[account.arena.net/applications](https://account.arena.net/applications). The "account" permission is
-enough.
+[account.arena.net/applications](https://account.arena.net/applications). Give it the permissions
+account, wallet, characters, progression and tradingpost, which covers the WvW tiles and the account tiles (Trading Post, earnings, Wizard's Vault,
+birthdays, bosses done).
 
 ### Squad tile and the Nexus bridge
 

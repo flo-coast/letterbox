@@ -56,7 +56,7 @@ DEFAULTS = {
     "output": "",                          # monitor (e.g. "DP-1"); empty = the primary one
     "gpu": "",                             # PCI address of the GPU to show (e.g. "0000:03:00.0"); empty = auto
     "mangohud_dir": "~/.local/share/letterbox/mangohud",   # MangoHud output_folder (FPS tiles)
-    "api_key": "",                         # GW2 API key ("account" permission): finds your WvW team
+    "api_key": "",                         # GW2 API key (account, wallet, characters, progression, tradingpost)
     "game_dir": "",                        # GW2's folder (Gw2-64.exe), for the Nexus bridge; empty = Steam library
     "bridge_file": "",                     # bridge.json of the Nexus addon; empty = in game_dir
     "graph_seconds": 60,
@@ -375,7 +375,7 @@ class WvW:
             m["_mine"] = next((c for c, ws in m.get("all_worlds", {}).items() if wid in ws), None)
             self.match, self.err = m, ""
             return
-        self.err = ("add a GW2 API key in the settings (Behaviour & hotkeys)" if not self.key
+        self.err = ("add a GW2 API key in the settings (System)" if not self.key
                     else "no matchup found for your team")
 
     # ---------- for the tiles ----------

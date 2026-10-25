@@ -561,3 +561,30 @@ def draw_birthdays(d):
         rows.append([("i", ICONS.get(pl.value["icons"].get(prof))), ("t", f" {name}  ", col),
                      ("t", f"turns {years} {when}", col or d.p["dim"])])
     d.lines(rows) if rows else d.msg("no birthdays coming up")
+
+
+# ---------- gem exchange ----------
+def fetch_gems(ex):
+    rate = api("commerce/exchange/coins?quantity=1000000")            # what 100 gold buy
+    hist = load_json("gem-history.json", {})
+    hist.setdefault(str(date.today()), rate["coins_per_gem"])
+    for d in sorted(hist)[:-8]:
+        del hist[d]
+    save_json("gem-history.json", hist)
+    return dict(per_gem=rate["coins_per_gem"], for_100g=rate["quantity"],
+                yesterday=hist.get(str(date.today() - timedelta(days=1))))
+
+
+@tile("gems", "Gem exchange")
+def draw_gems(d):
+    pl = d.ex.poll("gems", fetch_gems, 300)
+    if d.waiting(pl):
+        return
+    v, nf, gem = pl.value, d.r.f_num, ICONS.file("ui_gem")
+    top = d.big([("t", "1 ", None, nf), ("i", gem), ("t", "  =  ", d.p["dim"])] + coin_parts(v["per_gem"], nf))
+    rows = [[("t", "100 ", None, nf), ("i", ICONS.file("ui_coin_gold")), ("t", "  buy  ", d.p["dim"]), ("t", f"{v['for_100g']} ", None, nf),
+             ("i", gem)]]
+    if v["yesterday"]:
+        ch = (v["per_gem"] - v["yesterday"]) / v["yesterday"] * 100
+        rows.append([("t", f"gems {'+' if ch >= 0 else ''}{ch:.1f} % since yesterday", d.RED if ch > 0 else d.GREEN)])
+    d.lines(rows, top=top)

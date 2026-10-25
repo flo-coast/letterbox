@@ -163,6 +163,8 @@ class Settings(Gtk.ApplicationWindow):
         outer.append(bb)
         self.update_status()
         self.data.update()
+        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "letterbox-bar"]).returncode == 0:
+            GLib.timeout_add(1200, self.out_of_bar)        # the bar is up (game or test): stay out of its way
         GLib.timeout_add(200, self.data.sample_gpu)
         GLib.timeout_add_seconds(1, self.tick)
 
@@ -1222,8 +1224,14 @@ class Settings(Gtk.ApplicationWindow):
             if made:
                 os.remove(FLAG)
             self.update_status("Bar shown on the screen (toggle off to hide).")
+            GLib.timeout_add(1200, self.out_of_bar)
         else:
             self.stop_test()
+
+    def out_of_bar(self):
+        """The bar stays on top: this window moves out of its way, below (or above) it."""
+        gb.extras.move_out_of_bar(self.c, gb.screen(self.c), "letterbox.settings")
+        return False
 
     def stop_test(self):
         if not gw2_running():                     # with the game running the bar belongs to it

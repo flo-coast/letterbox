@@ -1120,6 +1120,51 @@ def window_click(ex, cfg):
         ex.window_free = True                             # first set it up (log in, pick a game), then park it
 
 
+def bar_area(cfg, sc):
+    """Where the bar is on screen, in logical coordinates: (x, y, w, h); sc: the monitor (bar.screen())."""
+    s = sc["scale"]
+    lw, lh, game = sc["w"] / s, sc["h"] / s, cfg["height"] / s
+    pos = cfg.get("position", "bottom")
+    free = lh - game
+    if pos == "top":
+        return sc["x"], sc["y"] + game, lw, free
+    return sc["x"], sc["y"], lw, free / 2 if pos == "center" else free
+
+
+def free_area(cfg, sc, share=0.9):
+    """A big rectangle on the monitor that the bar doesn't cover (the game's area), logical coordinates."""
+    bx, by, bw, bh = bar_area(cfg, sc)
+    lh = sc["h"] / sc["scale"]
+    top, bottom = (by + bh, sc["y"] + lh) if by <= sc["y"] + 1 else (sc["y"], by)
+    w, h = bw * share, (bottom - top) * share
+    return {"x": bx + (bw - w) / 2, "y": top + (bottom - top - h) / 2, "width": w, "height": h}
+
+
+def move_out_of_bar(cfg, sc, resource_class):
+    """One-shot KWin script: the given app's windows leave the bar's area (moved, and shrunk if needed, into
+    the rest of the monitor). Used for the settings while the bar is shown. sc: the monitor."""
+    if not sc:
+        return
+    bx, by, bw, bh = bar_area(cfg, sc)
+    area = free_area(cfg, sc, share=1.0)
+    js = ("const B = {x: %s, y: %s, width: %s, height: %s}; const A = %s;\n"
+          "workspace.windowList().forEach(w => { if (w.resourceClass !== %s) return;\n"
+          "  const g = w.frameGeometry;\n"
+          "  const overlap = g.x < B.x + B.width && g.x + g.width > B.x && g.y < B.y + B.height && g.y + g.height > B.y;\n"
+          "  if (!overlap) return;\n"
+          "  if (w.maximizable) w.setMaximize(false, false);\n"
+          "  const h = Math.min(g.height, A.height - 20), wd = Math.min(g.width, A.width - 20);\n"
+          "  w.frameGeometry = {x: Math.max(A.x + 10, Math.min(g.x, A.x + A.width - wd - 10)),\n"
+          "                     y: A.y + Math.max(10, (A.height - h) / 2), width: wd, height: h}; });\n"
+          % (bx, by, bw, bh, json.dumps(area), json.dumps(resource_class)))
+    try:
+        _run_script("letterbox-move-out", js)
+        time.sleep(0.3)
+        _kwin("unloadScript", "letterbox-move-out", sig="(s)")
+    except GLib.Error:
+        pass
+
+
 def window_toggle(ex, _arg=None):
     """Meta+Shift+W or a click: free the window (big, normal) or put it back into the tile."""
     ex.window_free = not getattr(ex, "window_free", False)
@@ -1182,11 +1227,9 @@ def window_place(bar):
         if getattr(ex, "window_loaded", None):
             window_unload(ex)
         return
-    if getattr(ex, "window_free", False):                 # setting up: a big normal window in the middle
+    if getattr(ex, "window_free", False):                 # setting up: a big normal window next to the bar
         if getattr(ex, "window_loaded", None):
-            lw, lh = sc["w"] / sc["scale"], sc["h"] / sc["scale"]
-            window_unload(ex, {"x": sc["x"] + lw * 0.15, "y": sc["y"] + lh * 0.1, "width": lw * 0.7,
-                               "height": lh * 0.8})
+            window_unload(ex, free_area(bar.cfg, sc))
         return
     # bar pixels -> logical screen coordinates; the bar is at the top of the monitor, or under the game
     k = (sc["w"] / sc["scale"]) / max(1, bar.area.get_width())

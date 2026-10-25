@@ -310,7 +310,9 @@ class WvW:
         ids = []
         if self.key:
             if self.team is None:
-                acc = api_get("account", self.key)
+                # the WvW team only comes with a newer schema version; "world" is the old server, which
+                # since the WvW restructuring can point to a different matchup than your team
+                acc = api_get("account?v=2024-07-20T01:00:00Z", self.key)
                 self.team = (acc.get("wvw") or {}).get("team_id") or acc.get("world")
             ids.append(self.team)
         for wid in ids:

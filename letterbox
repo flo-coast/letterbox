@@ -149,7 +149,8 @@ print(int(gx), int(gy + y / s), int(W / s), int(40 / s))' "$gx" "$gy" "$scale" "
         -E LETTERBOX_AMBIENT_AREA="$area" /usr/bin/python3 "$DIR/bar.py"
     log "GW2 pinned to the $pos of $out ($h px), bar started" ;;
 stop)
-    systemctl --user stop $UNIT letterbox-start 2>/dev/null
+    # one unit per call: systemctl stops nothing at all if one of several units doesn't exist
+    for u in letterbox-start $UNIT; do systemctl --user stop "$u" 2>/dev/null; done
     kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
     panels_restore
     log "stopped" ;;

@@ -3,7 +3,7 @@
 # runs; the letterbox bar shows it live. Source: GW2's MumbleLink shared memory (the official interface
 # for overlays). Under Proton it is a Wine file mapping inside the game process, so this runs as root
 # (letterbox-gw2log.service) and reads it through /proc/<pid>/mem. Output: /var/log/letterbox/
-# gw2-YYYYMMDD.csv (local time, kept 14 days). Map and specialization names come from the public GW2 API
+# gw2-YYYYMMDD.csv (local time, kept 14 days, LETTERBOX_KEEP_DAYS=0 keeps them all). Map and specialization names come from the public GW2 API
 # once per id and are cached in /var/lib/letterbox/gw2-names.json.
 # Also logged per second: the CPU use of GW2's busiest threads (% of one core: GW2's main/render thread
 # can be the bottleneck while the CPU as a whole looks idle), the GPU's busy % sampled at 10 Hz (average
@@ -13,7 +13,7 @@ from datetime import datetime
 
 LOGDIR = "/var/log/letterbox"
 CACHE = "/var/lib/letterbox/gw2-names.json"
-KEEP_DAYS = 14
+KEEP_DAYS = int(os.environ.get("LETTERBOX_KEEP_DAYS", "14"))
 NAME = "Guild Wars 2".encode("utf-16-le")
 FIELDS = ["time", "map_id", "map_name", "map_type", "in_combat", "mount", "map_open", "focus",
           "x", "y", "z", "tick", "thread1_pct", "thread1_name", "thread2_pct", "thread2_name", "proc_pct",
@@ -67,6 +67,8 @@ class Rapl:
 
 
 def cleanup():
+    if KEEP_DAYS <= 0:
+        return
     cut = time.time() - KEEP_DAYS * 86400
     for p in glob.glob(f"{LOGDIR}/gw2-*.csv"):
         try:

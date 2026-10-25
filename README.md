@@ -128,8 +128,9 @@ letterbox start|stop    what run does around the game, if you want to hook it up
 ## Good to know
 
 - Ping comes from the kernel's numbers for the game's connection. Nothing extra goes over the network.
-- The logger writes one CSV per day to `/var/log/letterbox` and keeps 14 days. Those files include your
-  character name and position. They stay on your machine.
+- The logger writes one CSV per day to `/var/log/letterbox` and keeps 14 days, or all of them with
+  `LETTERBOX_KEEP_DAYS=0` in the service. Those files include your character name and position. They stay
+  on your machine.
 - The event times come from the GW2 wiki's event timer via
   [giovazz89/gw2-api-event-timers](https://github.com/giovazz89/gw2-api-event-timers). The installer
   downloads them, and "Update event data" in the settings app fetches them again.

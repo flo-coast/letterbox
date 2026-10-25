@@ -146,6 +146,16 @@ letterbox setup-launch  add letterbox run to GW2's Steam launch options (Steam c
 letterbox setup-bridge  put the Nexus bridge addon into GW2's addons folder
 ```
 
+## Other games and systems
+
+letterbox is made for Guild Wars 2 on Linux with KDE Plasma and that's all it supports right now. The
+window placement and the sensor tiles would work for other games too, the rest (switching the game to
+windowed, events, WvW, squad) is GW2 only. Other desktops like GNOME and other systems like Windows would
+each need their own way of placing the windows.
+
+If you'd like it for another game, desktop or system, [open an issue](https://github.com/flo-coast/letterbox/issues/new)
+and say which one. If a few people ask for the same thing, it's more likely to happen.
+
 ## Uninstall
 
 `./uninstall.sh` removes everything but your settings, including `letterbox run` from the launch options

@@ -1,0 +1,157 @@
+#!/bin/bash
+# letterbox: Guild Wars 2 renders only a strip of the monitor (e.g. 3840x1800 of 3840x2160) at the bottom,
+# center or top, and the free space shows a stats bar (bar.py). Fewer pixels mean less GPU load, and the
+# info sits next to the game instead of on top of it.
+#   letterbox on [height]   letterbox mode on (GW2 closed, it switches GW2 to windowed)
+#   letterbox off           back to normal fullscreen
+#   letterbox status
+#   letterbox run <cmd...>  for the Steam launch options, letterbox run %command%
+#   letterbox start|stop    place GW2 and start the bar, or undo it (run does this, gamemode can too)
+# Options (height, position, tiles, ...) live in ~/.config/letterbox/config.json, edited by the settings
+# app (settings.py). The file ~/.config/letterbox/enabled only says "mode on".
+# Letterbox and fullscreen keep separate GW2 graphics settings (GFXSettings...xml.letterbox/.fullscreen).
+FLAG=~/.config/letterbox/enabled
+CONF=~/.config/letterbox/config.json
+DIR=$(dirname "$(readlink -f "$0")")
+JS=${XDG_RUNTIME_DIR:-/tmp}/letterbox-placement.js
+PANELS=~/.cache/letterbox-panels      # Plasma panel hiding modes to restore after the game
+NAME=letterbox-placement
+UNIT=letterbox-bar
+log() { echo "letterbox: $*"; }
+gw2_running() { pgrep -i -x 'gw2-64.exe' >/dev/null; }   # process name, not command lines (paths contain it too)
+kwin() { qdbus6 org.kde.KWin "$@"; }
+conf() {   # conf <key> <default>: one value from the JSON config
+    python3 -c 'import json,sys
+try: v = json.load(open(sys.argv[1])).get(sys.argv[2])
+except Exception: v = None
+print(sys.argv[3] if v in (None, "") else v)' "$CONF" "$1" "$2"
+}
+set_height() {
+    python3 -c 'import json,os,sys
+try: c=json.load(open(sys.argv[1]))
+except Exception: c={}
+c["height"]=int(sys.argv[2]); os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+json.dump(c, open(sys.argv[1],"w"), indent=1)' "$CONF" "$1"
+}
+
+# GW2's graphics settings: "gfx_settings" in the config, else the Steam version's file in any Steam library
+gfx_file() {
+    local f lib
+    f=$(conf gfx_settings "")
+    if [ -n "$f" ]; then echo "${f/#\~/$HOME}"; return; fi
+    for lib in ~/.local/share/Steam ~/.steam/steam ~/.var/app/com.valvesoftware.Steam/.local/share/Steam \
+               $(grep -ho '"path"[[:space:]]*"[^"]*"' ~/.local/share/Steam/steamapps/libraryfolders.vdf \
+                 ~/.steam/steam/steamapps/libraryfolders.vdf 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/'); do
+        f="$lib/steamapps/compatdata/1284210/pfx/drive_c/users/steamuser/AppData/Roaming/Guild Wars 2/GFXSettings.Gw2-64.exe.xml"
+        [ -f "$f" ] && { echo "$f"; return; }
+    done
+}
+GFX=$(gfx_file)
+need_gfx() {
+    [ -n "$GFX" ] && [ -f "$GFX" ] && return
+    log "GW2 graphics settings not found. Start GW2 once, or set \"gfx_settings\" in $CONF to the path of"
+    log "GFXSettings.Gw2-64.exe.xml (non-Steam installs: <prefix>/drive_c/users/<user>/AppData/Roaming/Guild Wars 2/)"
+    exit 1
+}
+
+plasma() { qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"; }
+# Plasma panels are docks and stay above normal windows: while letterbox GW2 runs they dodge windows (hide)
+panels_cover() {
+    [ -f "$PANELS" ] || plasma 'print(panels().map(p => p.id + "=" + p.hiding).join(" "))' > "$PANELS"
+    plasma 'panels().forEach(p => { p.hiding = "dodgewindows"; })' >/dev/null   # "windows can cover" is not scriptable
+}
+panels_restore() {
+    [ -f "$PANELS" ] || return 0
+    local js="" pair
+    for pair in $(cat "$PANELS"); do
+        js+="panels().forEach(p => { if (p.id == ${pair%%=*}) p.hiding = \"${pair#*=}\"; });"
+    done
+    plasma "$js" >/dev/null && rm -f "$PANELS"
+}
+
+set_screenmode() {
+    gw2_running && { log "close GW2 first (it rewrites its settings on exit)"; exit 1; }
+    need_gfx
+    sed -i "s/\(<OPTION Name=\"screenMode\"[^>]*Value=\"\)[a-z_]*\"/\1$1\"/" "$GFX"
+    grep -o '<OPTION Name="screenMode"[^>]*Value="[a-z_]*"' "$GFX" | sed 's/.*Value=/GW2 screenMode=/'
+}
+
+# Letterbox and fullscreen keep separate GW2 graphics settings: switching saves the active
+# GFXSettings as the profile being left and loads the other one (first time: a copy of the current).
+# GW2 writes GFXSettings when it exits, so changes made in-game stay in the profile that was active.
+swap_profile() {   # swap_profile <to: letterbox|fullscreen>
+    gw2_running && { log "close GW2 first (it rewrites its settings on exit)"; exit 1; }
+    need_gfx
+    local to=$1 from=letterbox
+    [ "$to" = letterbox ] && from=fullscreen
+    cp -p "$GFX" "$GFX.$from"
+    [ -f "$GFX.$to" ] && cp -p "$GFX.$to" "$GFX"
+    log "GW2 graphics: saved the $from settings, loaded the $to settings"
+}
+
+screen() {   # -> "name w h x y scale" of the monitor GW2 goes on
+    python3 "$DIR/bar.py" --screen
+}
+
+case ${1:-} in
+on)
+    read -r out W H _ <<<"$(screen)"
+    [ -n "$H" ] || { log "can't read the monitor setup (kscreen-doctor)"; exit 1; }
+    h=${2:-$(conf height $((W * 15 / 32 / 2 * 2)))}
+    [[ $h =~ ^[0-9]+$ ]] && (( h >= H / 2 && h < H )) || { log "height must be $((H / 2))..$((H - 1)) on $out"; exit 1; }
+    [ -f "$FLAG" ] || swap_profile letterbox
+    set_screenmode windowed
+    mkdir -p "$(dirname "$FLAG")" && touch "$FLAG" && set_height "$h"
+    log "on: GW2 ${W}x$h on $out, stats bar in the rest (next GW2 start)" ;;
+off)
+    [ -f "$FLAG" ] && swap_profile fullscreen
+    set_screenmode fullscreen
+    rm -f "$FLAG"
+    log "off: GW2 back to fullscreen" ;;
+status)
+    [ -f "$FLAG" ] && log "on, height $(conf height '?'), $(conf position bottom), monitor $(screen | cut -d' ' -f1-3)" || log "off"
+    [ -n "$GFX" ] && grep -o '<OPTION Name="screenMode"[^>]*Value="[a-z_]*"' "$GFX" | sed 's/.*Value=/GW2 screenMode=/'
+    [ -n "$GFX" ] || log "GW2 graphics settings not found"
+    [ "$(kwin /Scripting org.kde.kwin.Scripting.isScriptLoaded $NAME 2>/dev/null)" = true ] && log "KWin placement script loaded"
+    systemctl --user is-active --quiet $UNIT && log "stats bar running"; true ;;
+run)
+    shift
+    # start waits for the game window in the background; the game runs in the foreground
+    [ -f "$FLAG" ] && systemd-run --user --collect --quiet --unit=letterbox-start "$DIR/letterbox" start
+    "$@"
+    rc=$?
+    "$DIR/letterbox" stop >/dev/null
+    exit $rc ;;
+start)
+    [ -f "$FLAG" ] || exit 0
+    if [ -z "${FORCE:-}" ]; then
+        for _ in $(seq 120); do gw2_running && break; sleep 1; done
+        gw2_running || { log "GW2 not running, nothing to do"; exit 0; }
+    fi
+    read -r out W H gx gy scale <<<"$(screen)"
+    [ -n "$H" ] || { log "can't read the monitor setup (kscreen-doctor)"; exit 1; }
+    h=$(conf height $((W * 15 / 32 / 2 * 2))); pos=$(conf position bottom)
+    (( h < H )) || { log "height $h doesn't fit $out (${W}x$H): change it in the settings"; exit 1; }
+    sed -e "s/@OUTPUT@/$out/" -e "s/@GAME_H@/$h/" -e "s/@POS@/$pos/" \
+        -e "s/@OUT_W@/$W/" -e "s/@OUT_H@/$H/" "$DIR/placement.js" > "$JS"
+    kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
+    id=$(kwin /Scripting org.kde.kwin.Scripting.loadScript "$JS" $NAME) || { log "loading the KWin script failed"; exit 1; }
+    kwin /Scripting/Script"$id" org.kde.kwin.Script.run
+    # ambient background: a 40 px strip just inside the game edge next to the bar, in logical coordinates
+    area=$(python3 -c 'import sys
+gx, gy, s = (float(a) for a in sys.argv[1:4]); W, H, h = (int(a) for a in sys.argv[4:7]); pos = sys.argv[7]
+top = {"bottom": H - h, "center": (H - h) // 2, "top": 0}[pos]
+y = top + 8 if pos != "top" else h - 48
+print(int(gx), int(gy + y / s), int(W / s), int(40 / s))' "$gx" "$gy" "$scale" "$W" "$H" "$h" "$pos")
+    systemctl --user stop $UNIT 2>/dev/null   # a bar from an earlier start
+    panels_cover
+    systemd-run --user --collect --unit=$UNIT --quiet -E GSK_RENDERER=cairo -E GDK_BACKEND=x11 \
+        -E LETTERBOX_AMBIENT_AREA="$area" /usr/bin/python3 "$DIR/bar.py"
+    log "GW2 pinned to the $pos of $out ($h px), bar started" ;;
+stop)
+    systemctl --user stop $UNIT letterbox-start 2>/dev/null
+    kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
+    panels_restore
+    log "stopped" ;;
+*) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

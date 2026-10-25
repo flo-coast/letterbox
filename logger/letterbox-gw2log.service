@@ -1,0 +1,11 @@
+[Unit]
+Description=letterbox: GW2 logger (map, combat, character, busiest thread) for the letterbox bar
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/lib/letterbox/letterbox-gw2log.py
+# Environment=LETTERBOX_GPU=0000:03:00.0
+Restart=on-failure
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

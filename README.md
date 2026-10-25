@@ -33,6 +33,22 @@ I won't bore you with why I built this. If you're curious, there's a [section at
 | WvW map | who holds what on the map you're on and the latest captures |
 | Squad | squad or party size, the commander, your subgroup and everyone's professions as a colour bar (needs Nexus, see below) |
 | Fans, Memory, Network | the rest |
+| Trading Post | your watchlist with official item icons, prices in gold, silver and copper, the trend since yesterday, an alert price and what's waiting in your delivery box |
+| Session earnings | gold and every currency you made since the game started, gold per hour |
+| Wizard's Vault | daily and weekly progress and what's still open |
+| Birthdays | your characters' next birthdays (today and tomorrow also show up under the clock) |
+| Gem exchange | what a gem costs and how many 100 gold buy |
+| Run timer | a stopwatch for metas, fractals or jumping puzzles, click it or press Meta+Shift+T |
+| Playtime | time played today and this session, with an optional break reminder |
+| Now playing | Spotify, Deezer or YouTube in the browser, any player with title, artist and cover, click to pause |
+| Batteries | mouse, keyboard, headset and controller, with a warning before they run out |
+| Notifications | Discord, mail and other desktop notifications, readable without leaving the game |
+| Weather, Calendar | weather for your town and your next appointments from an iCal link |
+| Scores | NBA and other leagues, live games first, your team highlighted |
+| Window | any window held in the tile's place, for example NBA League Pass in Chrome, a stream or a chat |
+
+The event timer also greys out world bosses you've already done today. Tiles that use your account need a GW2
+API key, everything about them is set up in the settings under Extras.
 
 Every number tile can show the number, a graph of the last 30 s to 5 min, or both, in a colour of your
 choice.

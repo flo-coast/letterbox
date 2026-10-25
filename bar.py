@@ -1545,10 +1545,17 @@ def main():
         print(sc["name"], sc["w"], sc["h"], sc["x"], sc["y"], sc["scale"])
         return 0
     app = Gtk.Application(application_id="letterbox.bar")
+    import signal                                          # "letterbox stop" (SIGTERM) ends it cleanly too
+    try:
+        from gi.repository import GLibUnix
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (app.quit(), False)[1])
+    except ImportError:
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (app.quit(), False)[1])
 
     def activate(a):
         bar = Bar(a)
         bar.present()
+        a.connect("shutdown", lambda _a: [fn(bar) for fn in extras.ON_EXIT])
 
         def call(_conn, _sender, _path, _iface, method, _params, inv):
             if method in ("Cycle", "Toggle"):
@@ -1559,9 +1566,11 @@ def main():
                 bar.renderer.flash_until = time.time() + 0.8
             elif method == "Reload":
                 bar.reload()
-            elif method == "Action" and _params.unpack()[0] in extras.ACTIONS:
-                extras.ACTIONS[_params.unpack()[0]](bar.data.extras)
-                bar.area.queue_draw()
+            elif method == "Action":                       # "name" or "name:argument"
+                name, _, arg = _params.unpack()[0].partition(":")
+                if name in extras.ACTIONS:
+                    extras.ACTIONS[name](bar.data.extras, *([arg] if arg else []))
+                    bar.area.queue_draw()
             inv.return_value(None)
         a.get_dbus_connection().register_object("/letterbox/bar", IFACE, call, None, None)
     app.connect("activate", activate)

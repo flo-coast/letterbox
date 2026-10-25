@@ -940,7 +940,15 @@ class Settings(Gtk.ApplicationWindow):
                  Gtk.Entry(placeholder_text=f.get("placeholder", "")))
             w.set_hexpand(True)
             w.set_text(str(val or ""))
-            w.connect("changed", lambda e: self.set_path(key, e.get_text().strip()))
+            if f.get("apply"):                             # only on Enter or leaving the field, not per letter
+                apply = lambda *_a, e=w: (self.set_path(key, e.get_text().strip())
+                                          if e.get_text().strip() != (self.get_path(key, "") or "") else None)
+                w.connect("activate", apply)
+                focus = Gtk.EventControllerFocus()
+                focus.connect("leave", apply)
+                w.add_controller(focus)
+            else:
+                w.connect("changed", lambda e: self.set_path(key, e.get_text().strip()))
         elif kind == "spin":
             w = Gtk.SpinButton.new_with_range(f.get("min", 0), f.get("max", 999), f.get("step", 1))
             w.set_halign(Gtk.Align.START)

@@ -18,6 +18,7 @@ DEFAULTS = {}     # config defaults of the features
 SETTINGS = []     # fields for the settings' Extras tab: dict(key, label, kind, hint, ...)
 ACTIONS = {}      # D-Bus Action(name) of the bar, e.g. hotkeys: name -> fn(extras)
 AFTER_DRAW = []   # fn(bar) after every frame of the real bar (not the settings preview)
+ON_EXIT = []      # fn(bar) when the real bar ends (also on SIGTERM from "letterbox stop")
 
 
 def tile(key, title, group="game", click=None):
@@ -1044,9 +1045,11 @@ def draw_sports(d):
 # ---------- window tile: a real window (League Pass in Chrome, a stream, a chat) in the tile's place ----------
 DEFAULTS["window_tile"] = {"match": "", "command": ""}
 SETTINGS += [dict(kind="heading", label="Window tile"),
-             dict(key="window_tile.match", kind="entry", label="Window", placeholder="part of its title, e.g. NBA",
-                  hint="KWin puts the window whose title (or app id) contains this exactly over the 'Window' tile, "
-                       "without frame and above the game."),
+             dict(key="window_tile.match", kind="entry", apply=True, label="Window",
+                  placeholder="part of its title, e.g. NBA, then Enter",
+                  hint="KWin puts the one window whose title contains this (at least 3 letters) exactly over the "
+                       "'Window' tile, without frame and above the game. It applies when you press Enter. Steam, "
+                       "the game and KDE's own windows are never taken. Remove the text to give the window back."),
              dict(key="window_tile.command", kind="entry", label="Open with",
                   placeholder="google-chrome-stable --app=https://www.nba.com/watch",
                   hint="Clicking the empty tile runs this. For NBA League Pass use Chrome or Firefox, as streams "
@@ -1082,14 +1085,36 @@ def _kwin(method, *args, sig=None):
         GLib.Variant(sig, args) if sig else None, None, Gio.DBusCallFlags.NONE, 1000, None)
 
 
+def _window_js(match, body):
+    """KWin script code: hit(w) = the one kind of window the tile may take. Plain text in the title (or app id),
+    at least 3 characters, never the bar, the game, Steam or KDE's own windows."""
+    return ("const M = %s;\n"
+            "const SKIP = /^(letterbox|steam|org\\.kde\\.|plasmashell|kwin)/;\n"
+            "function hit(w) { return w.normalWindow && !SKIP.test(w.resourceClass) && M.length >= 3 &&\n"
+            "  (w.caption.toLowerCase().includes(M) || w.resourceClass.toLowerCase().includes(M)); }\n"
+            % json.dumps(match.strip().lower())) + body
+
+
+def _run_script(name, js):
+    path = os.path.join(GLib.get_user_runtime_dir(), name + ".js")
+    with open(path, "w") as fh:
+        fh.write(js)
+    try:
+        _kwin("unloadScript", name, sig="(s)")
+    except GLib.Error:
+        pass
+    sid = _kwin("loadScript", path, name, sig="(ss)").unpack()[0]
+    _kwin("run", f"/Scripting/Script{sid}")
+
+
 def window_place(bar):
-    """After each frame of the real bar: keep a KWin script loaded that holds the matching window over the
-    tile (in screen coordinates), or unload it when the tile isn't shown."""
+    """After each frame of the real bar: keep a KWin script loaded that holds ONE matching window over the
+    tile (in screen coordinates), or let it go when the tile isn't shown or the setting changed."""
     ex = bar.data.extras
     rect, ex.window_rect = getattr(ex, "window_rect", None), None
-    match = (bar.cfg.get("window_tile") or {}).get("match", "")
+    match = (bar.cfg.get("window_tile") or {}).get("match", "").strip()
     sc = bar.scr
-    if not rect or not match or not sc:
+    if not rect or len(match) < 3 or not sc:
         if getattr(ex, "window_loaded", None):
             window_unload(ex)
         return
@@ -1100,36 +1125,66 @@ def window_place(bar):
                                                     rect[2] * k, rect[3] * k))
     if want == getattr(ex, "window_loaded", None):
         return
-    js = ("const RE = new RegExp(%s, 'i'); const R = {x: %s, y: %s, width: %s, height: %s};\n"
-          "function hit(w) { return w.normalWindow && (RE.test(w.caption) || RE.test(w.resourceClass)); }\n"
-          "function put(w) { if (!hit(w)) return; if (w.fullScreen) w.fullScreen = false;\n"
-          "  w.noBorder = true; w.keepAbove = true; workspace.raiseWindow(w);\n"
-          "  const g = w.frameGeometry;\n"
-          "  if (Math.abs(g.x - R.x) + Math.abs(g.y - R.y) + Math.abs(g.width - R.width) + Math.abs(g.height - R.height) > 1)\n"
-          "    w.frameGeometry = R; }\n"
-          "function watch(w) { put(w); w.captionChanged.connect(() => put(w)); w.frameGeometryChanged.connect(() => put(w)); }\n"
-          "workspace.windowAdded.connect(watch); workspace.windowList().forEach(watch);\n"
-          % (json.dumps(match), *want[1:]))
-    path = os.path.join(GLib.get_user_runtime_dir(), WINDOW_SCRIPT + ".js")
-    with open(path, "w") as fh:
-        fh.write(js)
-    window_unload(ex)
+    if getattr(ex, "window_loaded", None):
+        window_unload(ex)                                 # gives the old window back first
+    js = _window_js(match, (
+        "const R = {x: %s, y: %s, width: %s, height: %s};\n"
+        "let held = null;                                  // only ever one window\n"
+        "function release(w) { w.noBorder = false; w.keepAbove = false; held = null; }\n"
+        "function put(w) {\n"
+        "  if (held && held !== w) return;\n"
+        "  if (!hit(w)) { if (held === w) release(w); return; }\n"
+        "  if (held !== w) callDBus('letterbox.bar', '/letterbox/bar', 'letterbox.Bar', 'Action',   // its size, for later\n"
+        "    'window-was:' + JSON.stringify(w.frameGeometry));\n"
+        "  held = w; if (w.fullScreen) w.fullScreen = false;\n"
+        "  w.noBorder = true; w.keepAbove = true;\n"
+        "  const g = w.frameGeometry;\n"
+        "  if (Math.abs(g.x - R.x) + Math.abs(g.y - R.y) + Math.abs(g.width - R.width) + Math.abs(g.height - R.height) > 1)\n"
+        "    w.frameGeometry = R;\n"
+        "}\n"
+        "function watch(w) { put(w); w.captionChanged.connect(() => put(w));\n"
+        "  w.frameGeometryChanged.connect(() => { if (held === w) put(w); }); }\n"
+        "workspace.windowRemoved.connect(w => { if (held === w) held = null; });\n"
+        "workspace.windowAdded.connect(watch); workspace.windowList().forEach(watch);\n") % want[1:])
     try:
-        sid = _kwin("loadScript", path, WINDOW_SCRIPT, sig="(ss)").unpack()[0]
-        _kwin("run", f"/Scripting/Script{sid}")
+        _run_script(WINDOW_SCRIPT, js)
         ex.window_loaded = want
     except GLib.Error as err:
         print("letterbox: window tile:", err.message, flush=True)
 
 
 def window_unload(ex):
+    """Unload the tile's script and give the window back: frame on, not pinned on top any more."""
+    old = getattr(ex, "window_loaded", None)
     try:
         _kwin("unloadScript", WINDOW_SCRIPT, sig="(s)")
     except GLib.Error:
         pass
     ex.window_loaded = None
+    if old:
+        was = getattr(ex, "window_was", None)               # its size before the tile took it
+        size = f"w.frameGeometry = {json.dumps(was)};" if was else ""
+        ex.window_was = None
+        try:
+            _run_script(WINDOW_SCRIPT + "-release", _window_js(old[0], (
+                "workspace.windowList().forEach(w => { if (hit(w) && w.noBorder && w.keepAbove) {\n"
+                "  w.noBorder = false; w.keepAbove = false; %s } });\n" % size)))
+            time.sleep(0.3)
+            _kwin("unloadScript", WINDOW_SCRIPT + "-release", sig="(s)")
+        except GLib.Error:
+            pass
 
 
+def window_was(ex, arg):
+    try:
+        g = json.loads(arg)
+        ex.window_was = {k: float(g[k]) for k in ("x", "y", "width", "height")}
+    except (ValueError, KeyError, TypeError):
+        pass
+
+
+ACTIONS["window-was"] = window_was
+ON_EXIT.append(lambda bar: window_unload(bar.data.extras))
 AFTER_DRAW.append(window_place)
 
 

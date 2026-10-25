@@ -61,6 +61,14 @@ class Poller:
         self.fetch, self.every = fetch, every
         self.value, self.err, self.updated = None, "loading…", 0
         self.last_touch, self.thread = 0, None
+        self.key, self.wake = None, threading.Event()
+
+    def setting(self, key):
+        """The setting(s) the data depends on: when they change, old data goes and it fetches right away."""
+        if key != self.key:
+            self.key = key
+            self.value, self.err = None, "loading…"
+            self.wake.set()
 
     def touch(self):
         self.last_touch = time.monotonic()
@@ -76,7 +84,8 @@ class Poller:
             except Exception as ex:              # network down, API busy, bad key: show it, try again later
                 self.err = str(ex)[:90]
             self.updated = time.time()
-            time.sleep(self.every)
+            self.wake.wait(self.every)
+            self.wake.clear()
 
 
 class Extras:
@@ -87,10 +96,13 @@ class Extras:
         self.started = time.time()
         self.pollers = {}
 
-    def poll(self, name, fetch, every):
+    def poll(self, name, fetch, every, key=None):
+        """The named poller, running. key: the settings its data depends on (default: the API key)."""
         if name not in self.pollers:
             self.pollers[name] = Poller(lambda: fetch(self), every)
-        return self.pollers[name].touch()
+        pl = self.pollers[name]
+        pl.setting(self.key if key is None else key)
+        return pl.touch()
 
     @property
     def key(self):
@@ -369,7 +381,7 @@ def draw_tp(d):
     if not d.cfg.get("tp_watch") and not d.ex.key:
         d.msg("add items in the settings (Extras)")
         return
-    pl = d.ex.poll("tp", fetch_tp, 120)
+    pl = d.ex.poll("tp", fetch_tp, 120, key=(d.ex.key, json.dumps(d.cfg.get("tp_watch", []))))
     if d.waiting(pl):
         return
     nf, rows = d.r.f_num, []
@@ -442,14 +454,12 @@ def tp_settings(win, f):
             tgt = Gtk.Entry(text=coins_text(w["target"]) if w.get("target") else "", placeholder_text="e.g. 1g 20s",
                             width_chars=10)
 
-            def set_target(e, n=n):
-                v = parse_coins(e.get_text())
-                if v is not None:
-                    lst = win.c["tp_watch"]
-                    lst[n]["target"] = v
-                    win.c["tp_watch"] = lst
+            def set_target(text, n=n):
+                v = parse_coins(text)
+                if v is not None and v != win.c["tp_watch"][n].get("target", 0):
+                    win.c["tp_watch"][n]["target"] = v
                     win.changed()
-            tgt.connect("changed", set_target)
+            win.apply_on_enter(tgt, set_target)
             row.append(tgt)
             rm = Gtk.Button(icon_name="edit-delete-symbolic", css_classes=["flat"], tooltip_text="remove")
             rm.connect("clicked", lambda _b, n=n: save([w for k, w in enumerate(win.c["tp_watch"]) if k != n]))
@@ -578,7 +588,7 @@ def fetch_gems(ex):
 
 @tile("gems", "Gem exchange")
 def draw_gems(d):
-    pl = d.ex.poll("gems", fetch_gems, 300)
+    pl = d.ex.poll("gems", fetch_gems, 300, key="")
     if d.waiting(pl):
         return
     v, nf, gem = pl.value, d.r.f_num, ICONS.file("ui_gem")
@@ -840,7 +850,7 @@ def draw_playtime(d):
 # ---------- weather (Open-Meteo, no account needed) ----------
 DEFAULTS["weather_city"] = ""
 SETTINGS += [dict(kind="heading", label="Weather"),
-             dict(key="weather_city", kind="entry", label="Town", placeholder="e.g. Hamburg",
+             dict(key="weather_city", kind="entry", apply=True, label="Town", placeholder="e.g. Hamburg, then Enter",
                   hint="For the weather tile, from open-meteo.com.")]
 WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "fog", 51: "drizzle",
        53: "drizzle", 55: "drizzle", 56: "freezing drizzle", 57: "freezing drizzle", 61: "light rain", 63: "rain",
@@ -871,9 +881,7 @@ def draw_weather(d):
     if not d.cfg.get("weather_city", "").strip():
         d.msg("set your town in the settings (Extras)")
         return
-    pl = d.ex.poll("weather", fetch_weather, 900)
-    if pl.value and pl.value["city"] != d.cfg["weather_city"].strip():
-        pl.value, pl.err = None, "loading…"                # town changed
+    pl = d.ex.poll("weather", fetch_weather, 900, key=d.cfg["weather_city"].strip())
     if d.waiting(pl):
         return
     v = pl.value
@@ -894,7 +902,7 @@ def draw_weather(d):
 # ---------- calendar (any iCal link: Google Calendar, Nextcloud, Outlook) ----------
 DEFAULTS["calendar_ics"] = ""
 SETTINGS += [dict(kind="heading", label="Calendar"),
-             dict(key="calendar_ics", kind="secret", label="iCal link",
+             dict(key="calendar_ics", kind="secret", apply=True, label="iCal link",
                   hint="Google Calendar: settings of the calendar → 'Secret address in iCal format'. Nextcloud and "
                        "Outlook have such a link too. It's private, so it's hidden here like a password.")]
 
@@ -967,7 +975,7 @@ def draw_calendar(d):
     if not d.cfg.get("calendar_ics", "").strip():
         d.msg("add your calendar's iCal link in the settings (Extras)")
         return
-    pl = d.ex.poll("calendar", fetch_calendar, 600)
+    pl = d.ex.poll("calendar", fetch_calendar, 600, key=d.cfg.get("calendar_ics", "").strip())
     if d.waiting(pl):
         return
     if not pl.value:
@@ -996,7 +1004,7 @@ LEAGUES = [("basketball/nba", "NBA"), ("basketball/wnba", "WNBA"), ("football/nf
 DEFAULTS.update(sports_league="basketball/nba", sports_team="")
 SETTINGS += [dict(kind="heading", label="Scores"),
              dict(key="sports_league", kind="choice", label="League", items=LEAGUES),
-             dict(key="sports_team", kind="entry", label="Your team", placeholder="abbreviation, e.g. BOS",
+             dict(key="sports_team", kind="entry", apply=True, label="Your team", placeholder="abbreviation, e.g. BOS",
                   hint="Highlighted and listed first. Data from ESPN's public scoreboard.")]
 
 
@@ -1016,9 +1024,7 @@ def fetch_sports(ex):
 
 @tile("sports", "Scores", group="net")
 def draw_sports(d):
-    pl = d.ex.poll("sports", fetch_sports, 60)
-    if pl.value and pl.value["league"] != d.cfg.get("sports_league", "basketball/nba"):
-        pl.value, pl.err = None, "loading…"                                # league changed
+    pl = d.ex.poll("sports", fetch_sports, 60, key=d.cfg.get("sports_league", "basketball/nba"))
     if d.waiting(pl):
         return
     games = pl.value["games"]
@@ -1050,7 +1056,7 @@ SETTINGS += [dict(kind="heading", label="Window tile"),
                   hint="KWin puts the one window whose title contains this (at least 3 letters) exactly over the "
                        "'Window' tile, without frame and above the game. It applies when you press Enter. Steam, "
                        "the game and KDE's own windows are never taken. Remove the text to give the window back."),
-             dict(key="window_tile.command", kind="entry", label="Open with",
+             dict(key="window_tile.command", kind="entry", apply=True, label="Open with",
                   placeholder="google-chrome-stable --app=https://www.nba.com/watch",
                   hint="Clicking the empty tile runs this. For NBA League Pass use Chrome or Firefox, as streams "
                        "with copy protection don't play anywhere else. Video costs GPU power while you play.")]

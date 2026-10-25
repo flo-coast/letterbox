@@ -932,6 +932,16 @@ class Settings(Gtk.ApplicationWindow):
         cur[parts[-1]] = value
         self.changed()
 
+    def apply_on_enter(self, entry, save):
+        """Fields whose value is used for network requests or acts on things: save on Enter or when leaving the
+        field, not after every letter (a half-typed value must never be used)."""
+        def apply(*_a):
+            save(entry.get_text().strip())
+        entry.connect("activate", apply)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", apply)
+        entry.add_controller(focus)
+
     def extra_widget(self, f):
         key, kind = f["key"], f["kind"]
         val = self.get_path(key, f.get("default"))
@@ -941,12 +951,8 @@ class Settings(Gtk.ApplicationWindow):
             w.set_hexpand(True)
             w.set_text(str(val or ""))
             if f.get("apply"):                             # only on Enter or leaving the field, not per letter
-                apply = lambda *_a, e=w: (self.set_path(key, e.get_text().strip())
-                                          if e.get_text().strip() != (self.get_path(key, "") or "") else None)
-                w.connect("activate", apply)
-                focus = Gtk.EventControllerFocus()
-                focus.connect("leave", apply)
-                w.add_controller(focus)
+                self.apply_on_enter(w, lambda v: self.set_path(key, v) if v != (self.get_path(key, "") or "")
+                                    else None)
             else:
                 w.connect("changed", lambda e: self.set_path(key, e.get_text().strip()))
         elif kind == "spin":
@@ -986,7 +992,7 @@ class Settings(Gtk.ApplicationWindow):
                       hint="MangoHud's output_folder, for the FPS tiles")
         g.attach(Gtk.Separator(margin_top=6, margin_bottom=6), 0, 9, 3, 1)
         key = Gtk.PasswordEntry(show_peek_icon=True, hexpand=True, text=self.c.get("api_key", ""))
-        key.connect("changed", lambda w: self.set("api_key", w.get_text().strip()))
+        self.apply_on_enter(key, lambda v: self.set("api_key", v) if v != self.c.get("api_key", "") else None)
         self.row(g, 10, "GW2 API key", key)
         g.attach(Gtk.Label(label=(
             "Needed for the WvW tiles, the game doesn't tell outside programs which matchup you're in. Make one "

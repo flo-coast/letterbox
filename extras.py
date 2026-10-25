@@ -279,3 +279,25 @@ class Draw:
             self.msg(poller.err or "loading…")
             return True
         return False
+
+
+# ---------- world bosses done today (marks in the event timer) ----------
+DEFAULTS["bosses_done"] = True
+SETTINGS += [dict(kind="heading", label="Event timer"),
+             dict(key="bosses_done", kind="check", label="Grey out bosses done today",
+                  hint="World bosses you've already looted today, from the GW2 API (needs the API key).")]
+BOSS_ALIASES = {"golem mark ii": "inquest_golem_mark_ii", "evolved jungle wurm": "triple_trouble_wurm",
+                "drakkar and spirits of the wild": "drakkar", "a titanic voyage": "mists_and_monsters_titans"}
+
+
+def boss_id(name):
+    """Event timer name -> the API's world boss id ("Fire Elemental" -> "fire_elemental")."""
+    n = name.lower().strip()
+    return BOSS_ALIASES.get(n, re.sub(r"[^a-z0-9]+", "_", n).strip("_"))
+
+
+def bosses_done(ex):
+    """Ids of the world bosses done today (empty without the API key or with the option off)."""
+    if not ex.cfg.get("bosses_done", True) or not ex.key:
+        return set()
+    return ex.poll("bosses", lambda e: set(api("account/worldbosses", e.key)), 300).value or set()

@@ -1194,6 +1194,10 @@ class Renderer:
             cr.show_text("no event rows chosen (settings → Events)")
             return
         now = datetime.now(timezone.utc)
+        done = set()
+        if data:
+            data.extras.cfg = cfg
+            done = extras.bosses_done(data.extras)
         ahead = cfg.get("event_ahead", 110)
         t0, t1 = now - timedelta(minutes=10), now + timedelta(minutes=ahead)
         span = (t1 - t0).total_seconds()
@@ -1226,6 +1230,10 @@ class Renderer:
                 bx0, bx1 = max(x, X(a)), min(x + w, X(b))
                 r, g, bb = (c / 255 for c in seg.get("bg", [128, 128, 128]))
                 active = a <= now < b
+                # done today (the API forgets at the daily reset, 00:00 UTC): grey, name struck through
+                finished = bool(done) and a.date() == now.date() and extras.boss_id(seg.get("name", "")) in done
+                if finished:
+                    r = g = bb = 0.42
                 cr.set_source_rgba(r * 0.55, g * 0.55, bb * 0.55, 1 if active else 0.75)
                 cr.rectangle(bx0 + cg, ry + rh * gap / 2, max(0, bx1 - bx0 - 2 * cg), rh * (1 - gap))
                 cr.fill()
@@ -1234,12 +1242,17 @@ class Renderer:
                 cr.save()
                 cr.rectangle(bx0 + cg, ry, max(0, bx1 - bx0 - 2 * cg - 2), rh)
                 cr.clip()
-                cr.set_source_rgb(1, 1, 1)
+                cr.set_source_rgb(*((0.62, 0.62, 0.64) if finished else (1, 1, 1)))
                 label, size = fit_text(cr, seg["name"], bx1 - bx0 - 10, min(rh * (1 - gap) * 0.6, h * 0.12),
                                        MIN_FONT)
                 cr.set_font_size(size)
                 cr.move_to(bx0 + 5, ry + rh / 2 + size * 0.36)            # vertically centred
                 cr.show_text(label)
+                if finished and label:
+                    cr.set_line_width(max(1, size * 0.08))
+                    cr.move_to(bx0 + 5, ry + rh / 2)
+                    cr.line_to(bx0 + 5 + cr.text_extents(label).x_advance, ry + rh / 2)
+                    cr.stroke()
                 cr.restore()
             ry += rh
         # time ticks (closer for short windows, wider for long ones) and the "now" marker

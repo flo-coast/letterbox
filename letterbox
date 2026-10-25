@@ -169,6 +169,7 @@ stop)
     # one unit per call: systemctl stops nothing at all if one of several units doesn't exist
     for u in letterbox-start $UNIT; do systemctl --user stop "$u" 2>/dev/null; done
     kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
+    kwin /Scripting org.kde.kwin.Scripting.unloadScript letterbox-window-tile >/dev/null 2>&1   # window tile
     panels_restore
     # frame logs in letterbox's own MangoHud folder: keep 14 days (a folder you chose yourself stays untouched)
     find ~/.local/share/letterbox/mangohud -name 'Gw2-64_*.csv' -mtime +14 -delete 2>/dev/null

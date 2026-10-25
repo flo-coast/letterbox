@@ -1039,3 +1039,95 @@ def draw_sports(d):
         rows.append([("i", ICONS.get(la)), ("t", f" {a}  ", col, nf), ("t", score, col, nf), ("t", f"  {b} ", col, nf),
                      ("i", ICONS.get(lb)), ("t", f"   {state}", d.GREEN if g["state"] == "in" else d.p["dim"])])
     d.lines(rows, size=max(12, d.ssz * 1.25))
+
+
+# ---------- window tile: a real window (League Pass in Chrome, a stream, a chat) in the tile's place ----------
+DEFAULTS["window_tile"] = {"match": "", "command": ""}
+SETTINGS += [dict(kind="heading", label="Window tile"),
+             dict(key="window_tile.match", kind="entry", label="Window", placeholder="part of its title, e.g. NBA",
+                  hint="KWin puts the window whose title (or app id) contains this exactly over the 'Window' tile, "
+                       "without frame and above the game."),
+             dict(key="window_tile.command", kind="entry", label="Open with",
+                  placeholder="google-chrome-stable --app=https://www.nba.com/watch",
+                  hint="Clicking the empty tile runs this. For NBA League Pass use Chrome or Firefox, as streams "
+                       "with copy protection don't play anywhere else. Video costs GPU power while you play.")]
+WINDOW_SCRIPT = "letterbox-window-tile"
+
+
+def window_open(ex, cfg):
+    cmd = (cfg.get("window_tile") or {}).get("command", "").strip()
+    if cmd:
+        import shlex
+        subprocess.Popen(shlex.split(cmd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+@tile("window", "Window", group="net", click=window_open)
+def draw_window(d):
+    wt = d.cfg.get("window_tile") or {}
+    if not wt.get("match"):
+        d.msg("pick a window in the settings (Extras)")
+        return
+    d.ex.window_rect = (d.x, d.y, d.w, d.h)              # placed by window_place() after the frame
+    d.cr.set_source_rgba(1, 1, 1, 0.04)
+    d.cr.rectangle(d.x, d.y, d.w, d.h)
+    d.cr.fill()
+    d.msg(f"'{wt['match']}' goes here" + (", click to open it" if wt.get("command") else ""))
+
+
+def _kwin(method, *args, sig=None):
+    return Gio.bus_get_sync(Gio.BusType.SESSION).call_sync(
+        "org.kde.KWin", args[0] if method == "run" else "/Scripting",
+        "org.kde.kwin.Script" if method == "run" else "org.kde.kwin.Scripting", method,
+        GLib.Variant(sig, args) if sig else None, None, Gio.DBusCallFlags.NONE, 1000, None)
+
+
+def window_place(bar):
+    """After each frame of the real bar: keep a KWin script loaded that holds the matching window over the
+    tile (in screen coordinates), or unload it when the tile isn't shown."""
+    ex = bar.data.extras
+    rect, ex.window_rect = getattr(ex, "window_rect", None), None
+    match = (bar.cfg.get("window_tile") or {}).get("match", "")
+    sc = bar.scr
+    if not rect or not match or not sc:
+        if getattr(ex, "window_loaded", None):
+            window_unload(ex)
+        return
+    # bar pixels -> logical screen coordinates; the bar is at the top of the monitor, or under the game
+    k = (sc["w"] / sc["scale"]) / max(1, bar.area.get_width())
+    top = bar.cfg["height"] / sc["scale"] if bar.cfg.get("position") == "top" else 0
+    want = (match,) + tuple(round(v, 1) for v in (sc["x"] + rect[0] * k, sc["y"] + top + rect[1] * k,
+                                                    rect[2] * k, rect[3] * k))
+    if want == getattr(ex, "window_loaded", None):
+        return
+    js = ("const RE = new RegExp(%s, 'i'); const R = {x: %s, y: %s, width: %s, height: %s};\n"
+          "function hit(w) { return w.normalWindow && (RE.test(w.caption) || RE.test(w.resourceClass)); }\n"
+          "function put(w) { if (!hit(w)) return; if (w.fullScreen) w.fullScreen = false;\n"
+          "  w.noBorder = true; w.keepAbove = true; workspace.raiseWindow(w);\n"
+          "  const g = w.frameGeometry;\n"
+          "  if (Math.abs(g.x - R.x) + Math.abs(g.y - R.y) + Math.abs(g.width - R.width) + Math.abs(g.height - R.height) > 1)\n"
+          "    w.frameGeometry = R; }\n"
+          "function watch(w) { put(w); w.captionChanged.connect(() => put(w)); w.frameGeometryChanged.connect(() => put(w)); }\n"
+          "workspace.windowAdded.connect(watch); workspace.windowList().forEach(watch);\n"
+          % (json.dumps(match), *want[1:]))
+    path = os.path.join(GLib.get_user_runtime_dir(), WINDOW_SCRIPT + ".js")
+    with open(path, "w") as fh:
+        fh.write(js)
+    window_unload(ex)
+    try:
+        sid = _kwin("loadScript", path, WINDOW_SCRIPT, sig="(ss)").unpack()[0]
+        _kwin("run", f"/Scripting/Script{sid}")
+        ex.window_loaded = want
+    except GLib.Error as err:
+        print("letterbox: window tile:", err.message, flush=True)
+
+
+def window_unload(ex):
+    try:
+        _kwin("unloadScript", WINDOW_SCRIPT, sig="(s)")
+    except GLib.Error:
+        pass
+    ex.window_loaded = None
+
+
+AFTER_DRAW.append(window_place)

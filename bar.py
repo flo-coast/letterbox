@@ -1496,18 +1496,24 @@ class Bar(Gtk.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_display(self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         GLib.timeout_add(200, self.data.sample_gpu)
         GLib.timeout_add_seconds(1, self.tick)
-        GLib.timeout_add(int(1000 / max(1, self.cfg.get("ambient_rate", 4))), self.grab)
+        self.grab_timer = GLib.timeout_add(int(1000 / max(1, self.cfg.get("ambient_rate", 4))), self.grab)
         GLib.timeout_add(250, self.animate)
         self.tick()
 
     def tick(self):
-        self.data.update()
+        try:                                              # an error must never stop the updates for good
+            self.data.update()
+        except Exception as ex:
+            print("letterbox: update failed:", repr(ex), flush=True)
         return True
 
     def on_draw(self, _a, cr, w, h):
         self.renderer.draw(cr, w, h, self.cfg, self.data, self.mode, self.amb_cols)
         for fn in extras.AFTER_DRAW:                      # e.g. the window tile's placement
-            fn(self)
+            try:
+                fn(self)
+            except Exception as ex:
+                print("letterbox:", fn.__name__, "failed:", repr(ex), flush=True)
 
     def on_click(self, _g, _n, x, y):
         key = self.renderer.hit(x, y)
@@ -1516,8 +1522,11 @@ class Bar(Gtk.ApplicationWindow):
             self.area.queue_draw()
 
     def grab(self):
-        if self.cfg.get("background") == "ambient" and self.mode != "off":
-            self.ambient.grab()
+        try:
+            if self.cfg.get("background") == "ambient" and self.mode != "off":
+                self.ambient.grab()
+        except Exception as ex:
+            print("letterbox: ambient failed:", repr(ex), flush=True)
         return True
 
     def animate(self):
@@ -1533,8 +1542,18 @@ class Bar(Gtk.ApplicationWindow):
         self.area.queue_draw()
 
     def reload(self):
-        self.cfg = load_config()
-        self.scr = screen(self.cfg)
+        """The settings changed something. Cheap unless it's the monitor, a data source or the sample rate:
+        the settings send this for every step of a slider."""
+        old, self.cfg = self.cfg, load_config()
+        if self.cfg.get("output") != old.get("output"):
+            self.scr = screen(self.cfg)                   # kscreen-doctor: only when it can have changed
+        if any(self.cfg.get(k) != old.get(k) for k in ("gpu", "mangohud_dir", "game_dir", "bridge_file")):
+            extras_state = self.data.extras                # timer, window tile etc. carry on
+            self.data = Data(self.cfg.get("graph_seconds", 60), self.cfg)
+            self.data.extras = extras_state
+        if self.cfg.get("ambient_rate") != old.get("ambient_rate"):
+            GLib.source_remove(self.grab_timer)
+            self.grab_timer = GLib.timeout_add(int(1000 / max(1, self.cfg.get("ambient_rate", 4))), self.grab)
         self.data.extras.cfg = self.cfg
         self.data.graph_seconds = self.cfg.get("graph_seconds", 60)
         self.area.queue_draw()

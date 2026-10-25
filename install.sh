@@ -1,65 +1,63 @@
 #!/bin/bash
-# Installs letterbox for the current user (run as your user, not with sudo; it asks for sudo only for
-# the GW2 logger service): files to ~/.local/share/letterbox, "letterbox" and "letterbox-settings"
-# commands to ~/.local/bin, the settings app to the app menu, the hotkey KWin script, the GW2 event data.
+# Installs letterbox for the current user. Run it as your user, it asks for sudo only where needed
+# (missing packages, the GW2 logger service). It installs the files to ~/.local/share/letterbox, the
+# "letterbox" command, the settings app and the hotkeys, then sets up what it can find on its own
+# (MangoHud logging, GW2's Steam launch option, letterbox mode) and shows what it detected.
 set -eu
 [ "$(id -u)" != 0 ] || { echo "run as your normal user (it asks for sudo itself)"; exit 1; }
 cd "$(dirname "$0")"
 SRC=$PWD
 DEST=~/.local/share/letterbox
 BIN=~/.local/bin
+ask() { local a; read -r -p "$1 [Y/n] " a; [ "${a:-y}" != n ] && [ "${a:-y}" != N ]; }
 
-missing=""
-python3 -c 'import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' 2>/dev/null || missing+=" GTK4-for-Python(python-gobject+gtk4)"
-python3 -c 'import cairo' 2>/dev/null || missing+=" python-cairo"
-python3 -c 'import numpy' 2>/dev/null || missing+=" python-numpy"
-for c in qdbus6 kscreen-doctor ss; do command -v $c >/dev/null || missing+=" $c"; done
-[ -z "$missing" ] || { echo "missing:$missing"; echo "(Arch: sudo pacman -S python-gobject gtk4 python-cairo python-numpy qt6-tools kscreen iproute2)"; exit 1; }
+# ---------- packages ----------
+pymods_ok() {
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; import cairo, numpy' 2>/dev/null
+}
+if ! pymods_ok; then
+    if command -v pacman >/dev/null; then pkgs=(sudo pacman -S --needed python-gobject gtk4 python-cairo python-numpy)
+    elif command -v dnf >/dev/null; then pkgs=(sudo dnf install python3-gobject gtk4 python3-cairo python3-numpy)
+    elif command -v apt-get >/dev/null; then pkgs=(sudo apt-get install python3-gi gir1.2-gtk-4.0 python3-gi-cairo python3-numpy)
+    elif command -v zypper >/dev/null; then pkgs=(sudo zypper install python3-gobject python3-gobject-cairo typelib-1_0-Gtk-4_0 python3-numpy)
+    else pkgs=(); fi
+    echo "letterbox needs GTK 4 for Python, pycairo and NumPy."
+    if [ ${#pkgs[@]} -gt 0 ] && ask "Install them with: ${pkgs[*]} ?"; then
+        "${pkgs[@]}"
+    fi
+    pymods_ok || { echo "Still missing. Install PyGObject with GTK 4, pycairo and NumPy, then run ./install.sh again."; exit 1; }
+fi
+for c in gdbus kscreen-doctor kwriteconfig6 ss; do
+    command -v $c >/dev/null || { echo "missing: $c (comes with GLib, KDE Plasma 6 and iproute2)"; exit 1; }
+done
 
+# ---------- files ----------
 mkdir -p "$DEST/data" "$BIN" ~/.local/share/applications ~/.local/share/kwin/scripts
-install -m755 letterbox bar.py settings.py "$DEST/"
+install -m755 letterbox bar.py settings.py setup.py "$DEST/"
 install -m644 sensors.py gw2events.py capture.py placement.js "$DEST/"
 ln -sf "$DEST/letterbox" "$BIN/letterbox"
 ln -sf "$DEST/settings.py" "$BIN/letterbox-settings"
 sed "s|@EXEC@|$DEST/settings.py|" letterbox.settings.desktop > ~/.local/share/applications/letterbox.settings.desktop
 
 echo "Downloading the GW2 event timer data..."
-python3 "$DEST/gw2events.py" --update || echo "  failed: try again later with: python3 $DEST/gw2events.py --update"
+python3 "$DEST/gw2events.py" --update >/dev/null && echo "  done" ||
+    echo "  failed, try again later with the 'Update event data' button in the settings"
 
 # hotkeys (Meta+Shift+B bar mode, Meta+Shift+M lag marker): a KWin script that is always loaded
 rm -rf ~/.local/share/kwin/scripts/letterbox-hotkeys
 cp -r kwin/letterbox-hotkeys ~/.local/share/kwin/scripts/
 kwriteconfig6 --file kwinrc --group Plugins --key letterbox-hotkeysEnabled true
-qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+gdbus call --session --dest org.kde.KWin --object-path /KWin --method org.kde.KWin.reconfigure >/dev/null 2>&1 || true
 
-# MangoHud logs give the FPS tiles: use the folder an existing GW2 MangoHud config already logs to
-mf=""
-for f in ~/.config/MangoHud/wine-Gw2-64.conf ~/.config/MangoHud/MangoHud.conf; do
-    [ -f "$f" ] && mf=$(sed -n 's/^[[:space:]]*output_folder[[:space:]]*=[[:space:]]*//p' "$f" | tail -1)
-    [ -n "$mf" ] && break
-done
-if [ -n "$mf" ]; then
-    python3 - "$mf" <<'PY'
-import json, os, sys
-p = os.path.expanduser("~/.config/letterbox/config.json")
-try: c = json.load(open(p))
-except Exception: c = {}
-c["mangohud_dir"] = sys.argv[1]
-os.makedirs(os.path.dirname(p), exist_ok=True)
-json.dump(c, open(p, "w"), indent=1)
-PY
-    echo "FPS tiles: reading MangoHud logs from $mf"
-else
-    echo "FPS tiles: let MangoHud log GW2's frames, e.g. in ~/.config/MangoHud/wine-Gw2-64.conf:"
-    echo "  output_folder=$HOME/.local/share/letterbox/mangohud"
-    echo "  autostart_log=5"
-    echo "  log_interval=0"
-    mkdir -p ~/.local/share/letterbox/mangohud
-fi
+# ---------- setup ----------
+echo
+python3 "$DEST/setup.py" mangohud || true
+[ -n "$("$DEST/letterbox" gfx-path)" ] || python3 "$DEST/setup.py" gfx || true
 
 echo
-read -r -p "Install the GW2 logger service (map, combat, character, thread tiles; needs sudo)? [Y/n] " a
-if [ "${a:-y}" != n ] && [ "${a:-y}" != N ]; then
+echo "The GW2 logger service reads the game's MumbleLink (the official overlay interface) for the map,"
+echo "combat, character and thread tiles. Under Proton that needs root."
+if ask "Install it (sudo)?"; then
     sudo install -Dm755 "$SRC/logger/letterbox-gw2log.py" /usr/local/lib/letterbox/letterbox-gw2log.py
     sudo install -Dm644 "$SRC/logger/letterbox-gw2log.service" /etc/systemd/system/letterbox-gw2log.service
     sudo systemctl daemon-reload
@@ -67,7 +65,22 @@ if [ "${a:-y}" != n ] && [ "${a:-y}" != N ]; then
 fi
 
 echo
-echo "Done. Next:"
-echo "  1. Steam → Guild Wars 2 → Properties → Launch options:  letterbox run %command%"
-echo "     (with other options, e.g.:  letterbox run mangohud %command%)"
-echo "  2. Close GW2, then turn letterbox mode on:  letterbox on   (or the switch in 'Letterbox settings')"
+rc=0
+python3 "$DEST/setup.py" launch add || rc=$?
+if [ $rc = 2 ] && ask "Close Steam now so letterbox can set GW2's launch option?"; then
+    steam -shutdown >/dev/null 2>&1 &
+    for _ in $(seq 30); do sleep 1; pgrep -x steam >/dev/null || break; done
+    python3 "$DEST/setup.py" launch add || true
+elif [ $rc = 2 ]; then
+    echo "Later, with Steam closed:  letterbox setup-launch"
+fi
+
+if [ ! -f ~/.config/letterbox/enabled ] && [ -n "$("$DEST/letterbox" gfx-path)" ] && ! pgrep -x -i gw2-64.exe >/dev/null; then
+    echo
+    if ask "Turn letterbox mode on now?"; then "$DEST/letterbox" on || true; fi
+fi
+
+echo
+"$DEST/letterbox" doctor || true
+echo
+echo "Start GW2 through Steam as usual. 'Letterbox settings' in the app menu sets up the bar."

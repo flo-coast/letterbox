@@ -46,7 +46,7 @@ THEMES = {
 }
 
 DEFAULTS = {
-    "height": 1800, "position": "bottom",
+    "height": None, "position": "bottom",  # game height in px; None = default_height() of the monitor
     "sensors": True,                       # False = plain black strip (legacy switch)
     "mode": "full",
     "tiles": ["fps", "ping", "cpu", "ctemp", "thread", "gpu", "busy", "gtemp", "events", "bottleneck"],
@@ -91,13 +91,21 @@ def load_config():
             out[k].update(v)
         else:
             out[k] = v
+    if not out.get("height"):
+        sc = screen(out)
+        out["height"] = default_height(sc["w"], sc["h"]) if sc else 1800
     return out
+
+
+def default_height(w, h):
+    """2.13 : 1 (3840x1800 on 4K, 2560x1200 on 1440p), but at least 10 % less than the monitor."""
+    return min(w * 15 // 32, h * 9 // 10) // 2 * 2
 
 
 def screen(cfg=None):
     """The monitor GW2 goes on: the configured output, else the primary one (KDE "priority 1").
     -> dict(name, w, h (mode in device pixels), x, y (logical position), scale) or None."""
-    cfg = cfg or load_config()
+    cfg = cfg if cfg is not None else load_config()
     try:
         outs = json.loads(subprocess.run(["kscreen-doctor", "-j"], capture_output=True, text=True,
                                          timeout=5).stdout)["outputs"]
@@ -436,6 +444,9 @@ TILES = {
 }
 if not HAS_PROBE:                    # Apple SMC tiles only with the t2pm probe (T2 MacBooks)
     del TILES["budget"], TILES["smc"]
+if not sensors.gpu_device(load_config().get("gpu", "")):    # GPU tiles need an AMD GPU (amdgpu sysfs)
+    for _k in ("gpu", "sclk", "busy", "gtemp", "vram"):
+        del TILES[_k]
 TILE_WEIGHT = {"events": 3}          # tiles share the width by weight; the timeline needs room
 MIN_FONT = 12                        # px: event names shrink to fit their block down to this, then get "…"
 MIN_LABEL_ROW = 13                   # px: thinner timeline rows (many series chosen) are drawn without text

@@ -7,6 +7,8 @@
 #   letterbox status
 #   letterbox run <cmd...>  for the Steam launch options, letterbox run %command%
 #   letterbox start|stop    place GW2 and start the bar, or undo it (run does this, gamemode can too)
+#   letterbox doctor        what letterbox found on this machine and what's missing
+#   letterbox setup-launch  put "letterbox run" into GW2's Steam launch options (Steam closed)
 # Options (height, position, tiles, ...) live in ~/.config/letterbox/config.json, edited by the settings
 # app (settings.py). The file ~/.config/letterbox/enabled only says "mode on".
 # Letterbox and fullscreen keep separate GW2 graphics settings (GFXSettings...xml.letterbox/.fullscreen).
@@ -19,7 +21,9 @@ NAME=letterbox-placement
 UNIT=letterbox-bar
 log() { echo "letterbox: $*"; }
 gw2_running() { pgrep -i -x 'gw2-64.exe' >/dev/null; }   # process name, not command lines (paths contain it too)
-kwin() { qdbus6 org.kde.KWin "$@"; }
+# D-Bus calls through gdbus (part of GLib, so no Qt tools needed): dbus <service> <path> <iface.method> [args]
+dbus() { local d=$1 o=$2 m=$3; shift 3; gdbus call --session --dest "$d" --object-path "$o" --method "$m" "$@"; }
+kwin() { dbus org.kde.KWin "$@"; }
 conf() {   # conf <key> <default>: one value from the JSON config
     python3 -c 'import json,sys
 try: v = json.load(open(sys.argv[1])).get(sys.argv[2])
@@ -54,7 +58,9 @@ need_gfx() {
     exit 1
 }
 
-plasma() { qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"; }
+plasma() {   # prints the script's output (gdbus wraps it as ('...',))
+    dbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1" | sed -e "s/^('//" -e "s/',)$//" -e 's/\\n$//'
+}
 # Plasma panels are docks and stay above normal windows: while letterbox GW2 runs they dodge windows (hide)
 panels_cover() {
     [ -f "$PANELS" ] || plasma 'print(panels().map(p => p.id + "=" + p.hiding).join(" "))' > "$PANELS"
@@ -89,6 +95,9 @@ swap_profile() {   # swap_profile <to: letterbox|fullscreen>
     log "GW2 graphics: saved the $from settings, loaded the $to settings"
 }
 
+default_h() {   # 2.13 : 1, but at least 10 % less than the monitor (needs W and H)
+    local a=$((W * 15 / 32)) b=$((H * 9 / 10)); echo $(( (a < b ? a : b) / 2 * 2 ))
+}
 screen() {   # -> "name w h x y scale" of the monitor GW2 goes on
     python3 "$DIR/bar.py" --screen
 }
@@ -97,7 +106,7 @@ case ${1:-} in
 on)
     read -r out W H _ <<<"$(screen)"
     [ -n "$H" ] || { log "can't read the monitor setup (kscreen-doctor)"; exit 1; }
-    h=${2:-$(conf height $((W * 15 / 32 / 2 * 2)))}
+    h=${2:-$(conf height "$(default_h)")}
     [[ $h =~ ^[0-9]+$ ]] && (( h >= H / 2 && h < H )) || { log "height must be $((H / 2))..$((H - 1)) on $out"; exit 1; }
     [ -f "$FLAG" ] || swap_profile letterbox
     set_screenmode windowed
@@ -112,10 +121,15 @@ status)
     [ -f "$FLAG" ] && log "on, height $(conf height '?'), $(conf position bottom), monitor $(screen | cut -d' ' -f1-3)" || log "off"
     [ -n "$GFX" ] && grep -o '<OPTION Name="screenMode"[^>]*Value="[a-z_]*"' "$GFX" | sed 's/.*Value=/GW2 screenMode=/'
     [ -n "$GFX" ] || log "GW2 graphics settings not found"
-    [ "$(kwin /Scripting org.kde.kwin.Scripting.isScriptLoaded $NAME 2>/dev/null)" = true ] && log "KWin placement script loaded"
+    [ "$(kwin /Scripting org.kde.kwin.Scripting.isScriptLoaded $NAME 2>/dev/null)" = "(true,)" ] && log "KWin placement script loaded"
     systemctl --user is-active --quiet $UNIT && log "stats bar running"; true ;;
+gfx-path) echo "$GFX" ;;
+doctor) exec python3 "$DIR/setup.py" doctor ;;
+setup-launch) exec python3 "$DIR/setup.py" launch add ;;
 run)
     shift
+    # MangoHud logs the frames for the FPS tiles (setup.py mangohud configured it)
+    command -v mangohud >/dev/null && [ -z "${MANGOHUD:-}" ] && export MANGOHUD=1
     # start waits for the game window in the background; the game runs in the foreground
     [ -f "$FLAG" ] && systemd-run --user --collect --quiet --unit=letterbox-start "$DIR/letterbox" start
     "$@"
@@ -130,13 +144,14 @@ start)
     fi
     read -r out W H gx gy scale <<<"$(screen)"
     [ -n "$H" ] || { log "can't read the monitor setup (kscreen-doctor)"; exit 1; }
-    h=$(conf height $((W * 15 / 32 / 2 * 2))); pos=$(conf position bottom)
+    h=$(conf height "$(default_h)"); pos=$(conf position bottom)
     (( h < H )) || { log "height $h doesn't fit $out (${W}x$H): change it in the settings"; exit 1; }
     sed -e "s/@OUTPUT@/$out/" -e "s/@GAME_H@/$h/" -e "s/@POS@/$pos/" \
         -e "s/@OUT_W@/$W/" -e "s/@OUT_H@/$H/" "$DIR/placement.js" > "$JS"
     kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
-    id=$(kwin /Scripting org.kde.kwin.Scripting.loadScript "$JS" $NAME) || { log "loading the KWin script failed"; exit 1; }
-    kwin /Scripting/Script"$id" org.kde.kwin.Script.run
+    id=$(kwin /Scripting org.kde.kwin.Scripting.loadScript "$JS" $NAME | tr -dc '0-9-')
+    [[ $id =~ ^[0-9]+$ ]] || { log "loading the KWin script failed"; exit 1; }
+    kwin /Scripting/Script"$id" org.kde.kwin.Script.run >/dev/null
     # ambient background: a 40 px strip just inside the game edge next to the bar, in logical coordinates
     area=$(python3 -c 'import sys
 gx, gy, s = (float(a) for a in sys.argv[1:4]); W, H, h = (int(a) for a in sys.argv[4:7]); pos = sys.argv[7]
@@ -153,6 +168,8 @@ stop)
     for u in letterbox-start $UNIT; do systemctl --user stop "$u" 2>/dev/null; done
     kwin /Scripting org.kde.kwin.Scripting.unloadScript $NAME >/dev/null 2>&1
     panels_restore
+    # frame logs in letterbox's own MangoHud folder: keep 14 days (a folder you chose yourself stays untouched)
+    find ~/.local/share/letterbox/mangohud -name 'Gw2-64_*.csv' -mtime +14 -delete 2>/dev/null
     log "stopped" ;;
 *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

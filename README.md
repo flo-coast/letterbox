@@ -58,12 +58,12 @@ choice.
 ## Requirements
 
 - KDE Plasma 6 on Wayland. The placement is done by a KWin script, so other desktops won't work.
-- GW2 through Steam with Proton. Other installs work too if you tell letterbox where GW2 keeps its graphics
-  settings (see below).
-- Python 3 with GTK 4, PyGObject, pycairo and NumPy. On Arch that's
-  `sudo pacman -S python-gobject gtk4 python-cairo python-numpy qt6-tools kscreen iproute2`
+- GW2 through Steam with Proton. Lutris, Heroic, Bottles and plain Wine installs are found too, they just
+  need the `letterbox run` part added to their launch command by hand.
+- Python 3 with GTK 4, pycairo and NumPy. The installer offers to install them on Arch, Fedora,
+  Debian/Ubuntu and openSUSE. Only Arch is tested so far.
 - [MangoHud](https://github.com/flightlessmango/MangoHud) for the FPS tiles.
-- An AMD GPU for the GPU tiles. Everything else works with any GPU.
+- An AMD GPU for the GPU tiles. Without one those tiles are hidden and everything else works.
 
 ## Install
 
@@ -71,31 +71,35 @@ choice.
 git clone https://github.com/flo-coast/letterbox.git && cd letterbox && ./install.sh
 ```
 
-Run it as your normal user. It installs to `~/.local/share/letterbox`, adds the `letterbox` command and
-the app "Letterbox settings", and asks for sudo once for the GW2 logger service. That service reads GW2's
-MumbleLink (the official interface for overlays) for the map, combat, character and thread tiles. Under
-Proton that memory lives inside the game process, which is why it needs root.
+Run it as your normal user and answer a few yes/no questions. It takes care of
 
-Then
+- the missing Python packages
+- the files in `~/.local/share/letterbox`, the `letterbox` command, the app "Letterbox settings" and the
+  hotkeys
+- MangoHud logging for the FPS tiles. An existing GW2 MangoHud config keeps everything and gets three
+  lines added. Without one you get a config that only logs and shows no overlay, the bar has the FPS anyway.
+- the GW2 logger service (asks for sudo). It reads GW2's MumbleLink, the official interface for overlays,
+  for the map, combat, character and thread tiles. Under Proton that memory lives inside the game process,
+  which is why it needs root.
+- `letterbox run` in GW2's Steam launch options, in front of whatever you already have there. Steam has to
+  be closed for that, the installer offers to close it.
+- switching letterbox mode on
 
-1. Put `letterbox run %command%` in the Steam launch options of Guild Wars 2. If you already have options,
-   put it in front, for example `letterbox run mangohud %command%`.
-2. Close GW2 and switch letterbox mode on in the settings app, or run `letterbox on`.
-3. Start the game.
+At the end it shows what it found. Run `letterbox doctor` anytime to see that again.
+
+```
+letterbox doctor
+  ok  Monitor           DP-1 3840x2160, game 3840x1800
+  ok  GPU               AMD Navi 14 [Radeon RX 5500/5500M / Pro 5300/5300M/5500M]
+  ok  GW2 settings      ~/.local/share/Steam/steamapps/compatdata/1284210/pfx/...
+  ok  Launch option     MANGOHUD=1 ~/.local/share/letterbox/letterbox run %command%
+  ...
+```
+
+Then start GW2 through Steam as usual.
 
 Letterbox mode keeps its own copy of GW2's graphics settings. `letterbox off` brings back the fullscreen
 ones, so switching back and forth doesn't mess up either.
-
-### FPS tiles
-
-The installer looks for a MangoHud config of GW2 and reads the logs from its `output_folder`. If you don't
-have one yet, put this in `~/.config/MangoHud/wine-Gw2-64.conf`
-
-```ini
-output_folder=/home/YOU/.local/share/letterbox/mangohud
-autostart_log=5
-log_interval=0
-```
 
 ### Settings that aren't in the app
 
@@ -104,8 +108,9 @@ In `~/.config/letterbox/config.json`
 | Key | Default | For |
 |---|---|---|
 | `output` | primary monitor | the monitor GW2 goes on, e.g. `"DP-1"` |
+| `height` | 2.13 : 1 of the monitor | game height in px, also in the settings app |
 | `gpu` | first discrete AMD GPU | PCI address of the GPU to show, e.g. `"0000:03:00.0"` |
-| `gfx_settings` | found in your Steam libraries | path to `GFXSettings.Gw2-64.exe.xml` for non-Steam installs |
+| `gfx_settings` | found automatically | path to `GFXSettings.Gw2-64.exe.xml` if it isn't |
 | `mangohud_dir` | `~/.local/share/letterbox/mangohud` | where MangoHud writes GW2's logs |
 
 The logger runs as root and doesn't see your config. If it picks the wrong GPU, set `LETTERBOX_GPU` in
@@ -117,13 +122,16 @@ The logger runs as root and doesn't see your config. If it picks the wrong GPU, 
 letterbox on [height]   letterbox mode on (GW2 closed)
 letterbox off           back to normal fullscreen
 letterbox status
-letterbox run <cmd>     for the Steam launch options
+letterbox run <cmd>     for the Steam launch options (the installer puts it there)
 letterbox start|stop    what run does around the game, if you want to hook it up elsewhere (gamemode)
+letterbox doctor        what letterbox found and what's missing
+letterbox setup-launch  add letterbox run to GW2's Steam launch options (Steam closed)
 ```
 
 ## Uninstall
 
-`./uninstall.sh` removes everything but your settings. `./uninstall.sh --purge` takes those too.
+`./uninstall.sh` removes everything but your settings, including `letterbox run` from the launch options
+if Steam is closed. `./uninstall.sh --purge` takes your settings too.
 
 ## Good to know
 

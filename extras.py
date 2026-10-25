@@ -986,3 +986,56 @@ def draw_calendar(d):
         rows.append([("t", f"{when}  ", d.ORANGE if soon else d.p["accent"]),
                      ("t", short(summary, 70), None if soon else d.p["num"])])
     d.lines(rows, size=max(12, d.ssz * 1.25))
+
+
+# ---------- sports scores (ESPN's public scoreboard; unofficial, so it may change without notice) ----------
+LEAGUES = [("basketball/nba", "NBA"), ("basketball/wnba", "WNBA"), ("football/nfl", "NFL"), ("hockey/nhl", "NHL"),
+           ("baseball/mlb", "MLB"), ("soccer/eng.1", "Premier League"), ("soccer/ger.1", "Bundesliga"),
+           ("soccer/esp.1", "LaLiga"), ("soccer/uefa.champions", "Champions League")]
+DEFAULTS.update(sports_league="basketball/nba", sports_team="")
+SETTINGS += [dict(kind="heading", label="Scores"),
+             dict(key="sports_league", kind="choice", label="League", items=LEAGUES),
+             dict(key="sports_team", kind="entry", label="Your team", placeholder="abbreviation, e.g. BOS",
+                  hint="Highlighted and listed first. Data from ESPN's public scoreboard.")]
+
+
+def fetch_sports(ex):
+    league = ex.cfg.get("sports_league", "basketball/nba")
+    data = http_json(f"https://site.api.espn.com/apis/site/v2/sports/{league}/scoreboard")
+    games = []
+    for ev in data.get("events", []):
+        comp = ev["competitions"][0]
+        teams = sorted(comp["competitors"], key=lambda c: c.get("homeAway") != "away")          # away first
+        games.append(dict(teams=[(t["team"].get("abbreviation", "?"), t.get("score", ""), t["team"].get("logo"))
+                                 for t in teams], state=ev["status"]["type"].get("state"),
+                          detail=ev["status"]["type"].get("shortDetail", ""), start=ev.get("date")))
+    ex.pollers["sports"].every = 30 if any(g["state"] == "in" for g in games) else 600       # live: often
+    return dict(league=league, games=games)
+
+
+@tile("sports", "Scores", group="net")
+def draw_sports(d):
+    pl = d.ex.poll("sports", fetch_sports, 60)
+    if pl.value and pl.value["league"] != d.cfg.get("sports_league", "basketball/nba"):
+        pl.value, pl.err = None, "loading…"                                # league changed
+    if d.waiting(pl):
+        return
+    games = pl.value["games"]
+    if not games:
+        d.msg("no games today")
+        return
+    fav = d.cfg.get("sports_team", "").strip().upper()
+    games = sorted(games, key=lambda g: (not any(t[0] == fav for t in g["teams"]) if fav else 0,
+                                         {"in": 0, "pre": 1, "post": 2}.get(g["state"], 3), g["start"] or ""))
+    rows, nf = [], d.r.f_num
+    for g in games:
+        (a, sa, la), (b, sb, lb) = g["teams"][:2]
+        col = d.GOLD if fav and fav in (a, b) else None
+        if g["state"] == "pre":
+            st = datetime.fromisoformat(g["start"].replace("Z", "+00:00")).astimezone()
+            score, state = "vs", st.strftime("%H:%M" if st.date() == date.today() else "%a %H:%M")
+        else:
+            score, state = f"{sa} : {sb}", g["detail"]
+        rows.append([("i", ICONS.get(la)), ("t", f" {a}  ", col, nf), ("t", score, col, nf), ("t", f"  {b} ", col, nf),
+                     ("i", ICONS.get(lb)), ("t", f"   {state}", d.GREEN if g["state"] == "in" else d.p["dim"])])
+    d.lines(rows, size=max(12, d.ssz * 1.25))

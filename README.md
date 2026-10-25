@@ -177,8 +177,11 @@ and say which one. If a few people ask for the same thing, it's more likely to h
 
 ## Uninstall
 
-`./uninstall.sh` removes everything but your settings, including `letterbox run` from the launch options
-if Steam is closed. `./uninstall.sh --purge` takes your settings too.
+`./uninstall.sh` removes the program, the hotkeys, the GW2 logger, the Nexus bridge addon and `letterbox run`
+from the Steam launch options (Steam has to be closed for that). It switches letterbox mode off first, so GW2
+gets its fullscreen settings back. Your settings, lag markers, MangoHud logs and the window tile's Firefox
+profile stay, `./uninstall.sh --purge` takes those too. A MangoHud config letterbox made or extended stays as
+well, the original is next to it as `.before-letterbox`.
 
 ## Good to know
 

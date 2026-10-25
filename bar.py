@@ -1012,8 +1012,13 @@ class Renderer:
             bx += sw
         # your subgroup's professions
         if kind == "Squad" and me.get("sub"):
-            mates = [PROFESSIONS.get(m.get("prof", 0), ("?", 0))[0] for m in members if m.get("sub") == me["sub"]]
-            self.text(cr, "your subgroup: " + ", ".join(sorted(mates)), x, by + bh + ssz * 1.4, w, ssz, dim)
+            mates = {}
+            for m in members:
+                if m.get("sub") == me["sub"]:
+                    n = PROFESSIONS.get(m.get("prof", 0), ("?", 0))[0]
+                    mates[n] = mates.get(n, 0) + 1
+            txt = " · ".join(f"{k} {n[:3]}" for n, k in sorted(mates.items(), key=lambda z: -z[1]))
+            self.text(cr, f"your subgroup ({sum(mates.values())}): {txt}", x, by + bh + ssz * 1.4, w, ssz, dim)
 
     def wvw_tile(self, cr, x, y, w, h, fh, ssz, cfg, data):
         """Teams by victory points: name, bar of the current skirmish's score, VP. Yours is marked."""

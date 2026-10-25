@@ -499,3 +499,29 @@ def draw_earnings(d):
             rows.append([("i", ICONS.get(c.get("icon"))), ("t", f" {val:+,}  ".replace(",", " "), None, nf),
                          ("t", c.get("name", k), d.p["dim"])])
     d.lines(rows, top=top)
+
+
+# ---------- Wizard's Vault ----------
+@tile("vault", "Wizard's Vault")
+def draw_vault(d):
+    if d.need_key():
+        return
+    pl = d.ex.poll("vault", lambda e: {p: api(f"account/wizardsvault/{p}", e.key) for p in ("daily", "weekly")}, 300)
+    if d.waiting(pl):
+        return
+    nf, rows = d.r.f_num, []
+    for per in ("daily", "weekly"):
+        v = pl.value.get(per) or {}
+        objs = v.get("objectives", [])
+        done = sum(1 for o in objs if o.get("progress_current", 0) >= o.get("progress_complete", 1))
+        head = [("t", f"{per.title()}  ", d.p["accent"]), ("t", f"{done}/{len(objs)}", None, nf)]
+        if v.get("meta_reward_claimed"):
+            head.append(("t", "   reward claimed", d.GREEN))
+        elif done == len(objs) and objs:
+            head.append(("t", "   reward ready to claim", d.GOLD))
+        rows.append(head)
+        for o in objs:
+            cur, need = o.get("progress_current", 0), o.get("progress_complete", 1)
+            if cur < need:
+                rows.append([("t", f"   {short(o.get('title', ''), 50)}  ", d.p["dim"]), ("t", f"{cur}/{need}", None, nf)])
+    d.lines(rows)

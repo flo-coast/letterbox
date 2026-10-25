@@ -268,12 +268,12 @@ def api_get(path, key=None):
 
 class WvW:
     """Your WvW matchup from the GW2 API, refreshed every 30 s in a thread while a WvW tile is shown.
-    Your team: the API key's account (/v2/account wvw.team_id), else the world id in MumbleLink."""
+    Your team comes from the API key's account (/v2/account wvw.team_id). MumbleLink's world_id is an
+    internal value since the WvW restructuring (e.g. 0x80000004) and doesn't name a team."""
     CACHE = os.path.expanduser("~/.cache/letterbox/wvw-objectives.json")
 
     def __init__(self):
         self.key = ""
-        self.world = None                     # from MumbleLink, set by Data.update
         self.team = None                      # team or world id found in the match
         self.match = None
         self.err = "loading…"
@@ -313,8 +313,6 @@ class WvW:
                 acc = api_get("account", self.key)
                 self.team = (acc.get("wvw") or {}).get("team_id") or acc.get("world")
             ids.append(self.team)
-        if self.world:
-            ids.append(self.world)
         for wid in ids:
             if not wid:
                 continue
@@ -325,7 +323,7 @@ class WvW:
             m["_mine"] = next((c for c, ws in m.get("all_worlds", {}).items() if wid in ws), None)
             self.match, self.err = m, ""
             return
-        self.err = ("add an API key in the settings, or enter WvW once" if not self.key and not self.world
+        self.err = ("add a GW2 API key in the settings (Behaviour & hotkeys)" if not self.key
                     else "no matchup found for your team")
 
     # ---------- for the tiles ----------
@@ -496,10 +494,6 @@ class Data:
         except (OSError, ValueError):
             pass
         self.in_combat = g.get("in_combat") == "1"
-        try:
-            self.wvw.world = int(g.get("world_id") or 0) or None
-        except ValueError:
-            pass
         if self.in_combat and self.combat_since is None:
             self.combat_since = now
         if not self.in_combat and self.combat_since is not None:

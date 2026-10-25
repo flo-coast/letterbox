@@ -726,9 +726,9 @@ class Settings(Gtk.ApplicationWindow):
         key.connect("changed", lambda w: self.set("api_key", w.get_text().strip()))
         self.row(g, 4, "GW2 API key", key)
         g.attach(Gtk.Label(label=(
-            "Optional, for the WvW tiles. It finds your WvW team even before you enter WvW (without a key the bar "
-            "learns it from the game once you're there). Make one at account.arena.net/applications, the "
-            "'account' permission is enough. It stays in ~/.config/letterbox/config.json."),
+            "Needed for the WvW tiles, the game doesn't tell outside programs which matchup you're in. Make one "
+            "at account.arena.net/applications, the 'account' permission is enough. It stays in "
+            "~/.config/letterbox/config.json, readable only by you."),
             xalign=0, wrap=True, css_classes=["dim-label"]), 1, 5, 2, 1)
         return sc
 

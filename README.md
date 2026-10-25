@@ -50,10 +50,10 @@ choice.
 
 ### WvW
 
-The WvW tiles get the matchup from the GW2 API every 30 seconds while they're shown. Your team comes from
-the game itself once you've been in WvW, or right away if you add an API key in the settings (made at
-[account.arena.net/applications](https://account.arena.net/applications), the "account" permission is
-enough).
+The WvW tiles get the matchup from the GW2 API every 30 seconds while they're shown. The game doesn't tell
+outside programs which matchup you're in, so they need an API key in the settings, made at
+[account.arena.net/applications](https://account.arena.net/applications). The "account" permission is
+enough.
 
 ### Squad tile and the Nexus bridge
 
